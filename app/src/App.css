@@ -191,8 +191,43 @@ body {
   border-color: rgba(255, 77, 77, 0.3);
 }
 
-/* wallet adapter override */
+/* wallet adapter override — style WalletMultiButton to match our design */
 .wallet-hidden { display: none !important; }
+
+/* WalletMultiButton styled as our connect button */
+.jl-wallet-multi-btn.wallet-adapter-button {
+  background: var(--accent) !important;
+  color: #0d1117 !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 0.5rem 1rem !important;
+  font-size: clamp(0.75rem, 2vw, 0.88rem) !important;
+  font-weight: 700 !important;
+  font-family: inherit !important;
+  height: auto !important;
+  line-height: 1.3 !important;
+  white-space: nowrap !important;
+  transition: background 0.15s, transform 0.1s !important;
+}
+.jl-wallet-multi-btn.wallet-adapter-button:hover {
+  background: var(--accent-hover) !important;
+  transform: translateY(-1px) !important;
+}
+/* Connected state — show wallet address pill */
+.jl-wallet-multi-btn.wallet-adapter-button-trigger {
+  background: var(--bg-input) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  font-weight: 500 !important;
+  max-width: 160px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  border-radius: 8px 0 0 8px !important;
+}
+/* Hide the wallet icon inside button on mobile to save space */
+.jl-wallet-multi-btn .wallet-adapter-button-start-icon {
+  display: none !important;
+}
 
 /* ═══════════════════════════════════
    NAV TABS

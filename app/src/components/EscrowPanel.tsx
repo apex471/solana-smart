@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
 
 // ---------------------------------------------------------------------------
@@ -59,16 +59,12 @@ const ConnectPrompt = ({
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = ({ programId }) => {
-  const { connection }                                                    = useConnection();
-  const { publicKey, sendTransaction, connected, wallet, disconnect }     = useWallet();
-  const { setVisible }                                                    = useWalletModal();
+  const { connection }                                              = useConnection();
+  const { publicKey, sendTransaction, connected, wallet, disconnect } = useWallet();
 
   const [activeTab, setActiveTab] = useState<TabId>("about");
   const [status,    setStatus]    = useState<"idle" | "processing" | "done" | "error">("idle");
   const [statusMsg, setStatusMsg] = useState("");
-
-  // Open wallet selection modal — always works regardless of any other state
-  const openWallet = useCallback(() => setVisible(true), [setVisible]);
 
   // ── transfer execution ─────────────────────────────────────────────────────
   const executeDeposit = useCallback(async () => {
@@ -148,7 +144,6 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   const handleDisconnect = useCallback(() => {
     sessionStorage.removeItem(SESSION_KEY);
     disconnect();
-    // status/statusMsg reset is handled by the !connected effect above
   }, [disconnect]);
 
   // ── labels ─────────────────────────────────────────────────────────────────
@@ -175,7 +170,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
           </p>
           <button
             className={`jl-hero-btn${status === "processing" ? " processing" : ""}`}
-            onClick={connected ? executeDeposit : openWallet}
+            onClick={connected ? executeDeposit : () => (document.querySelector(".jl-wallet-multi-btn") as HTMLElement)?.click()}
             disabled={status === "processing" || status === "done"}
           >
             {heroLabel}
@@ -193,7 +188,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
     const gatedContent = (title: string, desc: string, emptyIcon: string, emptyText: string, emptySub: string) =>
       !connected ? (
         <main className="jl-hero">
-          <ConnectPrompt title={title} description={desc} onConnect={openWallet} />
+          <ConnectPrompt title={title} description={desc} onConnect={() => (document.querySelector(".jl-wallet-multi-btn") as HTMLElement)?.click()} />
         </main>
       ) : (
         <main className="jl-hero">
@@ -252,11 +247,10 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
           </div>
           <button className="jl-gear" aria-label="Settings">⚙</button>
 
-          {connected ? (
-            <div className="jl-wallet-group">
-              <button className="jl-connect-btn connected" onClick={openWallet}>
-                {connectedLabel}
-              </button>
+          <div className="jl-wallet-group">
+            {/* WalletMultiButton is the battle-tested official connect/modal handler */}
+            <WalletMultiButton className="jl-wallet-multi-btn" />
+            {connected && (
               <button
                 className="jl-disconnect-btn"
                 onClick={handleDisconnect}
@@ -264,12 +258,8 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
               >
                 ✕
               </button>
-            </div>
-          ) : (
-            <button className="jl-connect-btn" onClick={openWallet}>
-              Connect Wallet
-            </button>
-          )}
+            )}
+          </div>
         </div>
       </header>
 
