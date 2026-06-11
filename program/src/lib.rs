@@ -3,6 +3,10 @@ pub mod instruction;
 pub mod processor;
 pub mod state;
 
+/// The one and only recipient — hardcoded on-chain. Funds can never be
+/// routed anywhere else regardless of what the client sends.
+pub const RECEIVER: &str = "5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f";
+
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_program::{
     account_info::AccountInfo, entrypoint, entrypoint::ProgramResult, pubkey::Pubkey,

