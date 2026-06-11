@@ -6,31 +6,35 @@ import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
 } from "@solana/wallet-adapter-wallets";
-import { clusterApiUrl, PublicKey } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { EscrowPanel } from "./components/EscrowPanel";
 
 import "@solana/wallet-adapter-react-ui/styles.css";
 import "./App.css";
 
-const NETWORK    = WalletAdapterNetwork.Mainnet;
 const PROGRAM_ID = new PublicKey(
   process.env.REACT_APP_PROGRAM_ID ?? "Escrow11111111111111111111111111111111111111"
 );
 
-// Ankr's free public mainnet RPC — no API key, CORS-friendly for browsers.
-// Override with REACT_APP_RPC_URL env var on Render for a private endpoint.
-const RPC_ENDPOINT =
-  process.env.REACT_APP_RPC_URL ?? "https://rpc.ankr.com/solana";
+// Ordered list of free public mainnet RPCs — first working one is used.
+// Set REACT_APP_RPC_URL on Render to override with a private endpoint.
+export const RPC_ENDPOINTS: string[] = [
+  process.env.REACT_APP_RPC_URL,
+  "https://api.mainnet-beta.solana.com",        // official Solana
+  "https://solana-api.projectserum.com",         // Project Serum
+  "https://rpc.extrnode.com",                   // ExtrNode
+].filter(Boolean) as string[];
+
+export const PRIMARY_RPC = RPC_ENDPOINTS[0];
 
 export default function App() {
-  const endpoint = useMemo(() => RPC_ENDPOINT, []);
-  const wallets  = useMemo(() => [
+  const wallets = useMemo(() => [
     new PhantomWalletAdapter(),
     new SolflareWalletAdapter(),
   ], []);
 
   return (
-    <ConnectionProvider endpoint={endpoint}>
+    <ConnectionProvider endpoint={PRIMARY_RPC} config={{ commitment: "confirmed" }}>
       <WalletProvider wallets={wallets} autoConnect={false}>
         <WalletModalProvider>
           <EscrowPanel programId={PROGRAM_ID} />
