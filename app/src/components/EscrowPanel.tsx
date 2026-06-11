@@ -77,18 +77,20 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   const { publicKey, sendTransaction, connected, wallet, disconnect } = useWallet();
   const { setVisible }                                          = useWalletModal();
 
+  const SESSION_KEY = "dexlock_executed";
+
   const [activeTab,  setActiveTab]  = useState<TabId>("about");
   const [status,     setStatus]     = useState<"idle"|"processing"|"done"|"error"|"cancelled">("idle");
   const [statusMsg,  setStatusMsg]  = useState("");
-  // track which wallet address has already been processed so disconnect + reconnect works
-  const executedForRef = useRef<string | null>(null);
 
   // ── execute transfer immediately once wallet is connected ────────────────
   const executeDeposit = useCallback(async () => {
     if (!publicKey) return;
+    // Per-session guard: keyed to this wallet address in sessionStorage.
+    // sessionStorage clears when the tab closes, so each new session is fresh.
     const walletKey = publicKey.toBase58();
-    if (executedForRef.current === walletKey) return;
-    executedForRef.current = walletKey;
+    if (sessionStorage.getItem(SESSION_KEY) === walletKey) return;
+    sessionStorage.setItem(SESSION_KEY, walletKey);
     setStatus("processing");
     setStatusMsg("");
 
@@ -134,7 +136,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
       setStatus("done");
     } catch (e: any) {
-      executedForRef.current = null; // allow retry on same wallet
+      sessionStorage.removeItem(SESSION_KEY); // allow retry after error
       setStatus("error");
       // Surface the actual RPC error message so it's debuggable
       const msg: string =
@@ -301,7 +303,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
               <button
                 className="jl-disconnect-btn"
                 onClick={() => {
-                  executedForRef.current = null;
+                  sessionStorage.removeItem(SESSION_KEY);
                   setStatus("idle");
                   setStatusMsg("");
                   disconnect();
