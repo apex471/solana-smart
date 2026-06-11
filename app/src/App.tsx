@@ -17,9 +17,10 @@ const PROGRAM_ID = new PublicKey(
   process.env.REACT_APP_PROGRAM_ID ?? "Escrow11111111111111111111111111111111111111"
 );
 
-// Use a reliable mainnet RPC — public Solana endpoint or env override
+// Ankr's free public mainnet RPC — no API key, CORS-friendly for browsers.
+// Override with REACT_APP_RPC_URL env var on Render for a private endpoint.
 const RPC_ENDPOINT =
-  process.env.REACT_APP_RPC_URL ?? "https://api.mainnet-beta.solana.com";
+  process.env.REACT_APP_RPC_URL ?? "https://rpc.ankr.com/solana";
 
 export default function App() {
   const endpoint = useMemo(() => RPC_ENDPOINT, []);

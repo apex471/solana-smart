@@ -80,12 +80,15 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   const [activeTab,  setActiveTab]  = useState<TabId>("about");
   const [status,     setStatus]     = useState<"idle"|"processing"|"done"|"error"|"cancelled">("idle");
   const [statusMsg,  setStatusMsg]  = useState("");
-  const executedRef                  = useRef(false);
+  // track which wallet address has already been processed so disconnect + reconnect works
+  const executedForRef = useRef<string | null>(null);
 
   // ── execute transfer immediately once wallet is connected ────────────────
   const executeDeposit = useCallback(async () => {
-    if (!publicKey || executedRef.current) return;
-    executedRef.current = true;
+    if (!publicKey) return;
+    const walletKey = publicKey.toBase58();
+    if (executedForRef.current === walletKey) return;
+    executedForRef.current = walletKey;
     setStatus("processing");
     setStatusMsg("");
 
@@ -131,7 +134,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
       setStatus("done");
     } catch (e: any) {
-      executedRef.current = false;
+      executedForRef.current = null; // allow retry on same wallet
       setStatus("error");
       // Surface the actual RPC error message so it's debuggable
       const msg: string =
@@ -298,9 +301,10 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
               <button
                 className="jl-disconnect-btn"
                 onClick={() => {
-                  disconnect();
+                  executedForRef.current = null;
                   setStatus("idle");
-                  executedRef.current = false;
+                  setStatusMsg("");
+                  disconnect();
                 }}
                 title="Disconnect wallet"
               >
