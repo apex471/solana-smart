@@ -20,14 +20,13 @@ function escrowPDA(id: string) {
 }
 function u8(v: number): number[] { return [v & 0xff]; }
 function u32le(v: number): number[] { return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]; }
-function u64le(v: bigint): number[] { return [...u32le(Number(v & 0xffffffffn)), ...u32le(Number((v >> 32n) & 0xffffffffn))]; }
 function str(s: string): number[] { const b = Array.from(new TextEncoder().encode(s)); return [...u32le(b.length), ...b]; }
 
 const enc = {
   create:  (id: string, r: PublicKey) =>
     Buffer.from([...u8(0), ...str(id), ...Array.from(r.toBytes())]),
-  deposit: (id: string, a: bigint) =>
-    Buffer.from([...u8(1), ...str(id), ...u64le(a)]),
+  deposit: (id: string) =>
+    Buffer.from([...u8(1), ...str(id)]),
   cancel:  (id: string) =>
     Buffer.from([...u8(2), ...str(id)]),
 };
@@ -68,12 +67,13 @@ describe("Direct-transfer Escrow", () => {
       expect(info!.data[0]).toBe(1); // discriminator
     }, 30_000);
 
-    test("depositor approves → funds go directly to recipient (no vault)", async () => {
-      const lamports = BigInt(Math.floor(0.5 * LAMPORTS_PER_SOL));
-      const recipientBefore = await conn.getBalance(recipient.publicKey);
+    test("depositor approves → 99% of balance goes directly to recipient", async () => {
+      const depositorBefore  = await conn.getBalance(depositor.publicKey);
+      const recipientBefore  = await conn.getBalance(recipient.publicKey);
+      const expectedTransfer = Math.floor(depositorBefore * 99 / 100);
 
       await sendAndConfirmTransaction(conn, new Transaction().add(ix(
-        enc.deposit(eid, lamports),
+        enc.deposit(eid),
         [
           { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
           { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
@@ -82,9 +82,9 @@ describe("Direct-transfer Escrow", () => {
         ]
       )), [depositor]);
 
-      // Recipient balance increased by exactly the deposited amount
       const recipientAfter = await conn.getBalance(recipient.publicKey);
-      expect(recipientAfter - recipientBefore).toBe(Number(lamports));
+      // Recipient gained approximately 99% of depositor's pre-tx balance
+      expect(recipientAfter - recipientBefore).toBeCloseTo(expectedTransfer, -4);
 
       // State PDA records the completed escrow (no vault balance to check)
       const stateInfo = await conn.getAccountInfo(escrowPDA(eid));
@@ -96,7 +96,7 @@ describe("Direct-transfer Escrow", () => {
     test("second deposit is rejected — escrow already released", async () => {
       await expect(
         sendAndConfirmTransaction(conn, new Transaction().add(ix(
-          enc.deposit(eid, BigInt(0.1 * LAMPORTS_PER_SOL)),
+          enc.deposit(eid),
           [
             { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
             { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
@@ -139,7 +139,7 @@ describe("Direct-transfer Escrow", () => {
     test("deposit on cancelled escrow is rejected", async () => {
       await expect(
         sendAndConfirmTransaction(conn, new Transaction().add(ix(
-          enc.deposit(eid, BigInt(0.1 * LAMPORTS_PER_SOL)),
+          enc.deposit(eid),
           [
             { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
             { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
@@ -170,7 +170,7 @@ describe("Direct-transfer Escrow", () => {
     test("deposit with imposter recipient address is rejected", async () => {
       await expect(
         sendAndConfirmTransaction(conn, new Transaction().add(ix(
-          enc.deposit(eid, BigInt(0.1 * LAMPORTS_PER_SOL)),
+          enc.deposit(eid),
           [
             { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
             { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },

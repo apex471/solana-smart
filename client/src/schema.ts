@@ -13,9 +13,9 @@ function writeString(buf: number[], s: string) {
 }
 function writePubkey(buf: number[], key: Uint8Array) { key.forEach((x) => buf.push(x)); }
 
-export function encodeCreateEscrow(id: string, recipient: Uint8Array, amount: bigint): Buffer {
+export function encodeCreateEscrow(id: string, recipient: Uint8Array): Buffer {
   const b: number[] = [];
-  writeU8(b, 0); writeString(b, id); writePubkey(b, recipient); writeU64LE(b, amount);
+  writeU8(b, 0); writeString(b, id); writePubkey(b, recipient);
   return Buffer.from(b);
 }
 

@@ -13,8 +13,6 @@ pub enum EscrowInstruction {
         escrow_id: String,
         /// Address that receives funds the moment depositor signs.
         recipient: Pubkey,
-        /// Amount in lamports, set by admin — never shown to depositor.
-        amount:    u64,
     },
 
     /// Depositor signs — funds go directly to recipient using the admin-set
