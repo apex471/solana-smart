@@ -6,3 +6,4 @@ dist/
 program-keypair.json
 *.so
 *.keypair
+app/build/
