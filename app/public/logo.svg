@@ -1,0 +1,39 @@
+<svg viewBox="0 0 400 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4"  result="b2"/>
+      <feMerge>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#glow)" fill="white" stroke="white" strokeLinejoin="round">
+    <!-- Head dome + body -->
+    <path d="M200 28 C240 28 295 50 320 85 C340 112 336 142 322 158 C312 168 295 165 285 174 C274 184 272 200 270 216 C280 222 294 232 298 248 C304 268 293 288 278 300 C264 312 246 316 236 330 C228 342 224 360 220 376 L215 390 L200 400 L185 390 L180 376 C176 360 172 342 164 330 C154 316 136 312 122 300 C107 288 96 268 102 248 C106 232 120 222 130 216 C128 200 126 184 115 174 C105 165 88 168 78 158 C64 142 60 112 80 85 C105 50 160 28 200 28 Z" strokeWidth="0"/>
+    <!-- Left ear tuft -->
+    <path d="M112 72 C90 44 62 22 48 42 C62 34 88 52 112 80 Z" strokeWidth="0"/>
+    <!-- Right ear tuft -->
+    <path d="M288 72 C310 44 338 22 352 42 C338 34 312 52 288 80 Z" strokeWidth="0"/>
+    <!-- Three bottom spikes -->
+    <path d="M180 390 L158 430 L183 414 L172 456 L197 432 L193 464 L200 450 L207 464 L203 432 L228 456 L217 414 L242 430 L220 390 L210 406 L200 418 L190 406 Z" strokeWidth="0"/>
+  </g>
+
+  <!-- Brow cutouts -->
+  <path d="M104 172 C110 150 132 140 158 143 C182 146 198 160 200 175 L193 176 C191 164 176 155 158 153 C140 151 122 159 117 174 Z" fill="#0d1117"/>
+  <path d="M296 172 C290 150 268 140 242 143 C218 146 202 160 200 175 L207 176 C209 164 224 155 242 153 C260 151 278 159 283 174 Z" fill="#0d1117"/>
+  <path d="M193 176 L200 183 L207 176 L204 169 L200 173 L196 169 Z" fill="#0d1117"/>
+
+  <!-- Beak -->
+  <path d="M200 200 L183 224 L200 252 L217 224 Z" fill="#0d1117"/>
+
+  <!-- Circuit marks -->
+  <g opacity="0.18" stroke="white" strokeWidth="1.2" fill="none">
+    <path d="M42 195 L20 195 L20 228 L8 228"/><path d="M42 218 L32 218 L32 248"/>
+    <path d="M358 195 L380 195 L380 228 L392 228"/><path d="M358 218 L368 218 L368 248"/>
+  </g>
+</svg>

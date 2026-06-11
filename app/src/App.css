@@ -202,25 +202,37 @@ body {
   text-align: center;
 }
 
-/* radial green glow behind lock */
+/* radial glow behind hero logo */
 .jl-hero::before {
   content: '';
   position: absolute;
   top: 0; left: 50%;
   transform: translateX(-50%);
   width: 700px;
-  height: 500px;
-  background: radial-gradient(ellipse at center top, rgba(0,200,120,0.18) 0%, transparent 65%);
+  height: 600px;
+  background: radial-gradient(ellipse at center top,
+    rgba(140,180,255,0.10) 0%,
+    rgba(100,140,220,0.06) 30%,
+    transparent 65%);
   pointer-events: none;
 }
 
 .jl-lock-icon {
-  width: 160px;
-  height: 160px;
+  width: 220px;
+  height: 220px;
   margin-bottom: 2rem;
   position: relative;
   z-index: 1;
-  filter: drop-shadow(0 0 40px rgba(0,229,176,0.35)) drop-shadow(0 0 80px rgba(0,229,176,0.15));
+  mix-blend-mode: screen;
+  filter:
+    drop-shadow(0 0 30px rgba(255,255,255,0.25))
+    drop-shadow(0 0 60px rgba(200,230,255,0.15));
+  animation: float 4s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-10px); }
 }
 
 .jl-hero-title {
