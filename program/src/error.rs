@@ -9,19 +9,17 @@ pub enum EscrowError {
     InvalidInstruction,
     #[error("Not authorized")]
     Unauthorized,
-    #[error("Escrow is not in the expected status for this operation")]
-    InvalidStatus,
+    #[error("Escrow is not in Pending status")]
+    NotPending,
     #[error("Deposit amount must be greater than zero")]
     ZeroDeposit,
     #[error("Arithmetic overflow")]
     Overflow,
     #[error("Incorrect program-derived address")]
     InvalidPDA,
-    #[error("Escrow has already been funded")]
-    AlreadyFunded,
     #[error("Escrow ID too long (max 32 bytes)")]
     EscrowIdTooLong,
-    #[error("Wrong recipient account")]
+    #[error("Recipient account does not match escrow")]
     WrongRecipient,
 }
 

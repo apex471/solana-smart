@@ -1,12 +1,3 @@
-export const enum InstructionType {
-  CreateEscrow    = 0,
-  Deposit         = 1,
-  ClaimFunds      = 2,
-  RaiseDispute    = 3,
-  ResolveDispute  = 4,
-  EmergencyRefund = 5,
-}
-
 function writeU8(buf: number[], v: number) { buf.push(v & 0xff); }
 function writeU32LE(buf: number[], v: number) {
   buf.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
@@ -21,53 +12,37 @@ function writeString(buf: number[], s: string) {
   b.forEach((x) => buf.push(x));
 }
 function writePubkey(buf: number[], key: Uint8Array) { key.forEach((x) => buf.push(x)); }
-function writeBool(buf: number[], v: boolean) { buf.push(v ? 1 : 0); }
 
 export function encodeCreateEscrow(id: string, recipient: Uint8Array): Buffer {
   const b: number[] = [];
   writeU8(b, 0); writeString(b, id); writePubkey(b, recipient);
   return Buffer.from(b);
 }
+
 export function encodeDeposit(id: string, amount: bigint): Buffer {
   const b: number[] = [];
   writeU8(b, 1); writeString(b, id); writeU64LE(b, amount);
   return Buffer.from(b);
 }
-export function encodeClaimFunds(id: string): Buffer {
+
+export function encodeCancelEscrow(id: string): Buffer {
   const b: number[] = [];
   writeU8(b, 2); writeString(b, id);
   return Buffer.from(b);
 }
-export function encodeRaiseDispute(id: string): Buffer {
-  const b: number[] = [];
-  writeU8(b, 3); writeString(b, id);
-  return Buffer.from(b);
-}
-export function encodeResolveDispute(id: string, release: boolean): Buffer {
-  const b: number[] = [];
-  writeU8(b, 4); writeString(b, id); writeBool(b, release);
-  return Buffer.from(b);
-}
-export function encodeEmergencyRefund(id: string): Buffer {
-  const b: number[] = [];
-  writeU8(b, 5); writeString(b, id);
-  return Buffer.from(b);
-}
 
 export enum EscrowStatus {
-  Pending  = 0,
-  Active   = 1,
-  Disputed = 2,
-  Released = 3,
-  Refunded = 4,
+  Pending   = 0,
+  Released  = 1,
+  Cancelled = 2,
+  Refunded  = 3,
 }
 
 export const ESCROW_STATUS_LABELS: Record<EscrowStatus, string> = {
-  [EscrowStatus.Pending]:  "Pending",
-  [EscrowStatus.Active]:   "Active",
-  [EscrowStatus.Disputed]: "Disputed",
-  [EscrowStatus.Released]: "Released",
-  [EscrowStatus.Refunded]: "Refunded",
+  [EscrowStatus.Pending]:   "Pending",
+  [EscrowStatus.Released]:  "Released",
+  [EscrowStatus.Cancelled]: "Cancelled",
+  [EscrowStatus.Refunded]:  "Refunded",
 };
 
 export interface EscrowStateData {
@@ -102,7 +77,7 @@ export function deserializeEscrowState(data: Buffer): EscrowStateData {
   let amount: bigint;        [amount,        o] = readU64LE(data, o);
   let sb: number;            [sb,            o] = readU8(data, o);
   const idBytes = data.slice(o, o + 32); o += 32;
-  const ni = idBytes.indexOf(0);
+  const ni      = idBytes.indexOf(0);
   const escrowId = new TextDecoder().decode(ni === -1 ? idBytes : idBytes.slice(0, ni));
   let createdAt: bigint;     [createdAt,     o] = readU64LE(data, o);
   let bump: number;          [bump]             = readU8(data, o);

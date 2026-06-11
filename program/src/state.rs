@@ -11,19 +11,26 @@ pub const ESCROW_STATE_SIZE: usize = 147;
 #[repr(u8)]
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, Copy, PartialEq)]
 pub enum EscrowStatus {
-    Pending  = 0,
-    Active   = 1,
-    Disputed = 2,
-    Released = 3,
-    Refunded = 4,
+    /// Admin created the slot — waiting for depositor.
+    Pending   = 0,
+    /// Funds sent directly to recipient — escrow complete.
+    Released  = 1,
+    /// Admin cancelled before deposit.
+    Cancelled = 2,
+    /// Admin emergency refund after deposit (edge case).
+    Refunded  = 3,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct EscrowState {
     pub discriminator: u8,
+    /// Admin who created and controls this escrow.
     pub admin:         Pubkey,
+    /// Set on deposit — who paid.
     pub depositor:     Pubkey,
+    /// Pre-set by admin — receives funds the moment depositor signs.
     pub recipient:     Pubkey,
+    /// Lamports paid.
     pub amount:        u64,
     pub status:        EscrowStatus,
     pub escrow_id:     [u8; ESCROW_ID_LEN],

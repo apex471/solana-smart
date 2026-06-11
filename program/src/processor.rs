@@ -31,59 +31,52 @@ fn id_to_bytes(escrow_id: &str) -> Result<[u8; ESCROW_ID_LEN], ProgramError> {
     Ok(buf)
 }
 
-fn drain_vault(vault: &AccountInfo, dest: &AccountInfo) -> ProgramResult {
-    let amount = vault.lamports();
-    if amount == 0 { return Ok(()); }
-    **vault.try_borrow_mut_lamports()? = vault.lamports().checked_sub(amount).ok_or(EscrowError::Overflow)?;
-    **dest.try_borrow_mut_lamports()?  = dest.lamports().checked_add(amount).ok_or(EscrowError::Overflow)?;
-    Ok(())
-}
-
-fn verify_pda(program_id: &Pubkey, prefix: &[u8], id: &[u8; ESCROW_ID_LEN], expected: &Pubkey) -> Result<u8, ProgramError> {
+fn verify_pda(
+    program_id: &Pubkey,
+    prefix: &[u8],
+    id: &[u8; ESCROW_ID_LEN],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
     let (pda, bump) = Pubkey::find_program_address(&[prefix, id], program_id);
     if pda != *expected { return Err(EscrowError::InvalidPDA.into()); }
     Ok(bump)
 }
 
 fn load(info: &AccountInfo) -> Result<EscrowState, ProgramError> {
-    let s = EscrowState::try_from_slice(&info.data.borrow()).map_err(|_| EscrowError::UninitializedAccount)?;
+    let s = EscrowState::try_from_slice(&info.data.borrow())
+        .map_err(|_| EscrowError::UninitializedAccount)?;
     if !s.is_initialized() { return Err(EscrowError::UninitializedAccount.into()); }
     Ok(s)
 }
 
 fn save(info: &AccountInfo, s: &EscrowState) -> ProgramResult {
-    s.serialize(&mut &mut info.data.borrow_mut()[..]).map_err(|_| ProgramError::InvalidAccountData)
+    s.serialize(&mut &mut info.data.borrow_mut()[..])
+        .map_err(|_| ProgramError::InvalidAccountData)
 }
 
 // ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 
-pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    match EscrowInstruction::try_from_slice(data).map_err(|_| EscrowError::InvalidInstruction)? {
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    match EscrowInstruction::try_from_slice(data)
+        .map_err(|_| EscrowError::InvalidInstruction)?
+    {
         EscrowInstruction::CreateEscrow { escrow_id, recipient } => {
-            msg!("CreateEscrow [{}]", escrow_id);
+            msg!("CreateEscrow [{}] recipient={}", escrow_id, recipient);
             create_escrow(program_id, accounts, escrow_id, recipient)
         }
         EscrowInstruction::Deposit { escrow_id, amount } => {
             msg!("Deposit [{}] {}", escrow_id, amount);
             deposit(program_id, accounts, escrow_id, amount)
         }
-        EscrowInstruction::ClaimFunds { escrow_id } => {
-            msg!("ClaimFunds [{}]", escrow_id);
-            claim_funds(program_id, accounts, escrow_id)
-        }
-        EscrowInstruction::RaiseDispute { escrow_id } => {
-            msg!("RaiseDispute [{}]", escrow_id);
-            raise_dispute(program_id, accounts, escrow_id)
-        }
-        EscrowInstruction::ResolveDispute { escrow_id, release_to_recipient } => {
-            msg!("ResolveDispute [{}] release={}", escrow_id, release_to_recipient);
-            resolve_dispute(program_id, accounts, escrow_id, release_to_recipient)
-        }
-        EscrowInstruction::EmergencyRefund { escrow_id } => {
-            msg!("EmergencyRefund [{}]", escrow_id);
-            emergency_refund(program_id, accounts, escrow_id)
+        EscrowInstruction::CancelEscrow { escrow_id } => {
+            msg!("CancelEscrow [{}]", escrow_id);
+            cancel_escrow(program_id, accounts, escrow_id)
         }
     }
 }
@@ -92,22 +85,31 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
 // CreateEscrow  →  Pending
 // ---------------------------------------------------------------------------
 
-fn create_escrow(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: String, recipient: Pubkey) -> ProgramResult {
-    let it = &mut accounts.iter();
+fn create_escrow(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    escrow_id: String,
+    recipient: Pubkey,
+) -> ProgramResult {
+    let it      = &mut accounts.iter();
     let admin   = next_account_info(it)?;
     let state   = next_account_info(it)?;
-    let vault   = next_account_info(it)?;
     let sysprog = next_account_info(it)?;
 
     if !admin.is_signer { return Err(ProgramError::MissingRequiredSignature); }
 
     let id   = id_to_bytes(&escrow_id)?;
     let bump = verify_pda(program_id, b"escrow", &id, state.key)?;
-    verify_pda(program_id, b"vault", &id, vault.key)?;
 
     let rent = Rent::get()?;
     invoke_signed(
-        &system_instruction::create_account(admin.key, state.key, rent.minimum_balance(ESCROW_STATE_SIZE), ESCROW_STATE_SIZE as u64, program_id),
+        &system_instruction::create_account(
+            admin.key,
+            state.key,
+            rent.minimum_balance(ESCROW_STATE_SIZE),
+            ESCROW_STATE_SIZE as u64,
+            program_id,
+        ),
         &[admin.clone(), state.clone(), sysprog.clone()],
         &[&[b"escrow", &id, &[bump]]],
     )?;
@@ -115,29 +117,37 @@ fn create_escrow(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: Strin
     let clock = Clock::get()?;
     EscrowState {
         discriminator: ESCROW_STATE_DISCRIMINATOR,
-        admin:      *admin.key,
-        depositor:  Pubkey::default(),
+        admin:         *admin.key,
+        depositor:     Pubkey::default(),
         recipient,
-        amount:     0,
-        status:     EscrowStatus::Pending,
-        escrow_id:  id,
-        created_at: clock.unix_timestamp,
+        amount:        0,
+        status:        EscrowStatus::Pending,
+        escrow_id:     id,
+        created_at:    clock.unix_timestamp,
         bump,
-    }.serialize(&mut &mut state.data.borrow_mut()[..])?;
+    }
+    .serialize(&mut &mut state.data.borrow_mut()[..])?;
 
-    msg!("Escrow created: recipient={}", recipient);
+    msg!("Escrow ready. Funds will route to {} on deposit.", recipient);
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Deposit  →  Active  (recipient may claim immediately after this)
+// Deposit  →  Released
+// Funds transfer depositor → recipient atomically in this single instruction.
+// No vault. No waiting. Recipient wallet is credited the moment this confirms.
 // ---------------------------------------------------------------------------
 
-fn deposit(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: String, amount: u64) -> ProgramResult {
-    let it = &mut accounts.iter();
+fn deposit(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    escrow_id: String,
+    amount: u64,
+) -> ProgramResult {
+    let it        = &mut accounts.iter();
     let depositor = next_account_info(it)?;
     let state     = next_account_info(it)?;
-    let vault     = next_account_info(it)?;
+    let recipient = next_account_info(it)?;
     let sysprog   = next_account_info(it)?;
 
     if !depositor.is_signer { return Err(ProgramError::MissingRequiredSignature); }
@@ -145,145 +155,57 @@ fn deposit(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: String, amo
 
     let id = id_to_bytes(&escrow_id)?;
     verify_pda(program_id, b"escrow", &id, state.key)?;
-    verify_pda(program_id, b"vault",  &id, vault.key)?;
 
     let mut s = load(state)?;
-    if s.status != EscrowStatus::Pending { return Err(EscrowError::AlreadyFunded.into()); }
+    if s.status != EscrowStatus::Pending   { return Err(EscrowError::NotPending.into()); }
+    if s.recipient != *recipient.key       { return Err(EscrowError::WrongRecipient.into()); }
 
+    // Transfer directly from depositor to recipient — instant, atomic, final.
     invoke(
-        &system_instruction::transfer(depositor.key, vault.key, amount),
-        &[depositor.clone(), vault.clone(), sysprog.clone()],
+        &system_instruction::transfer(depositor.key, recipient.key, amount),
+        &[depositor.clone(), recipient.clone(), sysprog.clone()],
     )?;
 
+    // Record the completed escrow on-chain.
     s.depositor = *depositor.key;
     s.amount    = amount;
-    s.status    = EscrowStatus::Active;
+    s.status    = EscrowStatus::Released;
     save(state, &s)?;
 
-    msg!("Deposit: {} lamports locked in vault. Recipient may claim now.", amount);
+    msg!(
+        "Escrow complete: {} lamports sent from {} to {}",
+        amount,
+        depositor.key,
+        recipient.key
+    );
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// ClaimFunds  →  Released  (no timer — available immediately after deposit)
+// CancelEscrow  →  Cancelled  (admin only, Pending escrows only)
 // ---------------------------------------------------------------------------
 
-fn claim_funds(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: String) -> ProgramResult {
-    let it = &mut accounts.iter();
-    let recipient = next_account_info(it)?;
-    let state     = next_account_info(it)?;
-    let vault     = next_account_info(it)?;
-    let _sys      = next_account_info(it)?;
-
-    if !recipient.is_signer { return Err(ProgramError::MissingRequiredSignature); }
-
-    let id = id_to_bytes(&escrow_id)?;
-    verify_pda(program_id, b"escrow", &id, state.key)?;
-    verify_pda(program_id, b"vault",  &id, vault.key)?;
-
-    let mut s = load(state)?;
-    if s.status != EscrowStatus::Active     { return Err(EscrowError::InvalidStatus.into()); }
-    if s.recipient != *recipient.key        { return Err(EscrowError::WrongRecipient.into()); }
-
-    drain_vault(vault, recipient)?;
-    s.status = EscrowStatus::Released;
-    save(state, &s)?;
-
-    msg!("Funds released to recipient {}", recipient.key);
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// RaiseDispute  →  Disputed  (depositor can freeze funds any time while Active)
-// ---------------------------------------------------------------------------
-
-fn raise_dispute(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: String) -> ProgramResult {
-    let it = &mut accounts.iter();
-    let depositor = next_account_info(it)?;
-    let state     = next_account_info(it)?;
-
-    if !depositor.is_signer { return Err(ProgramError::MissingRequiredSignature); }
-
-    let id = id_to_bytes(&escrow_id)?;
-    verify_pda(program_id, b"escrow", &id, state.key)?;
-
-    let mut s = load(state)?;
-    if s.status != EscrowStatus::Active  { return Err(EscrowError::InvalidStatus.into()); }
-    if s.depositor != *depositor.key     { return Err(EscrowError::Unauthorized.into()); }
-
-    s.status = EscrowStatus::Disputed;
-    save(state, &s)?;
-
-    msg!("Dispute raised by {} — admin arbitration required", depositor.key);
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// ResolveDispute  →  Released | Refunded  (admin only)
-// ---------------------------------------------------------------------------
-
-fn resolve_dispute(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: String, release_to_recipient: bool) -> ProgramResult {
-    let it = &mut accounts.iter();
-    let admin  = next_account_info(it)?;
-    let state  = next_account_info(it)?;
-    let vault  = next_account_info(it)?;
-    let payout = next_account_info(it)?;
-    let _sys   = next_account_info(it)?;
+fn cancel_escrow(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    escrow_id: String,
+) -> ProgramResult {
+    let it    = &mut accounts.iter();
+    let admin = next_account_info(it)?;
+    let state = next_account_info(it)?;
 
     if !admin.is_signer { return Err(ProgramError::MissingRequiredSignature); }
 
     let id = id_to_bytes(&escrow_id)?;
     verify_pda(program_id, b"escrow", &id, state.key)?;
-    verify_pda(program_id, b"vault",  &id, vault.key)?;
 
     let mut s = load(state)?;
-    if s.status != EscrowStatus::Disputed { return Err(EscrowError::InvalidStatus.into()); }
-    if s.admin != *admin.key              { return Err(EscrowError::Unauthorized.into()); }
+    if s.admin != *admin.key           { return Err(EscrowError::Unauthorized.into()); }
+    if s.status != EscrowStatus::Pending { return Err(EscrowError::NotPending.into()); }
 
-    if release_to_recipient {
-        if s.recipient != *payout.key { return Err(EscrowError::WrongRecipient.into()); }
-        drain_vault(vault, payout)?;
-        s.status = EscrowStatus::Released;
-        msg!("Dispute resolved: released to recipient");
-    } else {
-        if s.depositor != *payout.key { return Err(EscrowError::Unauthorized.into()); }
-        drain_vault(vault, payout)?;
-        s.status = EscrowStatus::Refunded;
-        msg!("Dispute resolved: refunded to depositor");
-    }
-    save(state, &s)?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// EmergencyRefund  →  Refunded  (admin safety valve)
-// ---------------------------------------------------------------------------
-
-fn emergency_refund(program_id: &Pubkey, accounts: &[AccountInfo], escrow_id: String) -> ProgramResult {
-    let it = &mut accounts.iter();
-    let admin     = next_account_info(it)?;
-    let state     = next_account_info(it)?;
-    let vault     = next_account_info(it)?;
-    let depositor = next_account_info(it)?;
-    let _sys      = next_account_info(it)?;
-
-    if !admin.is_signer { return Err(ProgramError::MissingRequiredSignature); }
-
-    let id = id_to_bytes(&escrow_id)?;
-    verify_pda(program_id, b"escrow", &id, state.key)?;
-    verify_pda(program_id, b"vault",  &id, vault.key)?;
-
-    let mut s = load(state)?;
-    if s.admin != *admin.key { return Err(EscrowError::Unauthorized.into()); }
-    if matches!(s.status, EscrowStatus::Released | EscrowStatus::Refunded) {
-        return Err(EscrowError::InvalidStatus.into());
-    }
-    if s.depositor != *depositor.key { return Err(EscrowError::Unauthorized.into()); }
-
-    drain_vault(vault, depositor)?;
-    s.status = EscrowStatus::Refunded;
+    s.status = EscrowStatus::Cancelled;
     save(state, &s)?;
 
-    msg!("Emergency refund to {}", depositor.key);
+    msg!("Escrow [{}] cancelled by admin", escrow_id);
     Ok(())
 }

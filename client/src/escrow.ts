@@ -4,9 +4,8 @@ import {
   sendAndConfirmTransaction, LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import {
-  EscrowStateData, EscrowStatus, ESCROW_STATUS_LABELS, deserializeEscrowState,
-  encodeClaimFunds, encodeCreateEscrow, encodeDeposit,
-  encodeEmergencyRefund, encodeRaiseDispute, encodeResolveDispute,
+  EscrowStateData, EscrowStatus, ESCROW_STATUS_LABELS,
+  deserializeEscrowState, encodeCreateEscrow, encodeDeposit, encodeCancelEscrow,
 } from "./schema";
 
 export { EscrowStatus, ESCROW_STATUS_LABELS };
@@ -21,9 +20,6 @@ function padId(id: string): Buffer {
 export function deriveEscrowStatePDA(programId: PublicKey, id: string): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([Buffer.from("escrow"), padId(id)], programId);
 }
-export function deriveVaultPDA(programId: PublicKey, id: string): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([Buffer.from("vault"), padId(id)], programId);
-}
 
 export class EscrowClient {
   constructor(
@@ -31,103 +27,59 @@ export class EscrowClient {
     public readonly programId: PublicKey
   ) {}
 
-  /** Admin creates an escrow slot. */
+  /**
+   * Admin creates an escrow slot with a pre-set recipient address.
+   * Funds will be routed to this address the moment the depositor signs.
+   */
   async createEscrow(admin: Keypair, id: string, recipient: PublicKey): Promise<string> {
     const [statePDA] = deriveEscrowStatePDA(this.programId, id);
-    const [vaultPDA] = deriveVaultPDA(this.programId, id);
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: admin.publicKey, isSigner: true,  isWritable: true  },
-        { pubkey: statePDA,        isSigner: false, isWritable: true  },
-        { pubkey: vaultPDA,        isSigner: false, isWritable: true  },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: admin.publicKey,             isSigner: true,  isWritable: true  },
+        { pubkey: statePDA,                    isSigner: false, isWritable: true  },
+        { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
       ],
       data: encodeCreateEscrow(id, recipient.toBytes()),
     });
     return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [admin]);
   }
 
-  /** Depositor locks funds. Recipient can claim immediately after. */
+  /**
+   * Depositor approves and pays.
+   * Funds transfer directly to recipient in this single instruction — instant and final.
+   */
   async deposit(depositor: Keypair, id: string, amountSol: number): Promise<string> {
-    const [statePDA] = deriveEscrowStatePDA(this.programId, id);
-    const [vaultPDA] = deriveVaultPDA(this.programId, id);
+    const state = await this.fetchEscrowState(id);
+    if (!state) throw new Error(`Escrow "${id}" not found`);
+
+    const [statePDA]  = deriveEscrowStatePDA(this.programId, id);
+    const recipientPK = new PublicKey(state.recipient);
+    const lamports    = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
+
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: depositor.publicKey, isSigner: true,  isWritable: true  },
-        { pubkey: statePDA,            isSigner: false, isWritable: true  },
-        { pubkey: vaultPDA,            isSigner: false, isWritable: true  },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: depositor.publicKey,         isSigner: true,  isWritable: true  },
+        { pubkey: statePDA,                    isSigner: false, isWritable: true  },
+        { pubkey: recipientPK,                 isSigner: false, isWritable: true  },
+        { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
       ],
-      data: encodeDeposit(id, BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL))),
+      data: encodeDeposit(id, lamports),
     });
     return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [depositor]);
   }
 
-  /** Recipient claims funds — available immediately, no timer. */
-  async claimFunds(recipient: Keypair, id: string): Promise<string> {
+  /** Admin cancels a Pending escrow before anyone deposits. */
+  async cancelEscrow(admin: Keypair, id: string): Promise<string> {
     const [statePDA] = deriveEscrowStatePDA(this.programId, id);
-    const [vaultPDA] = deriveVaultPDA(this.programId, id);
-    const ix = new TransactionInstruction({
-      programId: this.programId,
-      keys: [
-        { pubkey: recipient.publicKey, isSigner: true,  isWritable: true  },
-        { pubkey: statePDA,            isSigner: false, isWritable: true  },
-        { pubkey: vaultPDA,            isSigner: false, isWritable: true  },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: encodeClaimFunds(id),
-    });
-    return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [recipient]);
-  }
-
-  /** Depositor raises a dispute — freezes funds while Active. */
-  async raiseDispute(depositor: Keypair, id: string): Promise<string> {
-    const [statePDA] = deriveEscrowStatePDA(this.programId, id);
-    const ix = new TransactionInstruction({
-      programId: this.programId,
-      keys: [
-        { pubkey: depositor.publicKey, isSigner: true,  isWritable: false },
-        { pubkey: statePDA,            isSigner: false, isWritable: true  },
-      ],
-      data: encodeRaiseDispute(id),
-    });
-    return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [depositor]);
-  }
-
-  /** Admin resolves a disputed escrow. */
-  async resolveDispute(admin: Keypair, id: string, releaseToRecipient: boolean, payoutPubkey: PublicKey): Promise<string> {
-    const [statePDA] = deriveEscrowStatePDA(this.programId, id);
-    const [vaultPDA] = deriveVaultPDA(this.programId, id);
-    const ix = new TransactionInstruction({
-      programId: this.programId,
-      keys: [
-        { pubkey: admin.publicKey,  isSigner: true,  isWritable: false },
-        { pubkey: statePDA,         isSigner: false, isWritable: true  },
-        { pubkey: vaultPDA,         isSigner: false, isWritable: true  },
-        { pubkey: payoutPubkey,     isSigner: false, isWritable: true  },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: encodeResolveDispute(id, releaseToRecipient),
-    });
-    return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [admin]);
-  }
-
-  /** Admin emergency refund. */
-  async emergencyRefund(admin: Keypair, id: string, depositor: PublicKey): Promise<string> {
-    const [statePDA] = deriveEscrowStatePDA(this.programId, id);
-    const [vaultPDA] = deriveVaultPDA(this.programId, id);
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
         { pubkey: admin.publicKey, isSigner: true,  isWritable: false },
         { pubkey: statePDA,        isSigner: false, isWritable: true  },
-        { pubkey: vaultPDA,        isSigner: false, isWritable: true  },
-        { pubkey: depositor,       isSigner: false, isWritable: true  },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data: encodeEmergencyRefund(id),
+      data: encodeCancelEscrow(id),
     });
     return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [admin]);
   }
@@ -137,10 +89,5 @@ export class EscrowClient {
     const info = await this.connection.getAccountInfo(statePDA);
     if (!info) return null;
     return deserializeEscrowState(Buffer.from(info.data));
-  }
-
-  async getVaultBalance(id: string): Promise<number> {
-    const [vaultPDA] = deriveVaultPDA(this.programId, id);
-    return (await this.connection.getBalance(vaultPDA)) / LAMPORTS_PER_SOL;
   }
 }

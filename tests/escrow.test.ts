@@ -1,5 +1,8 @@
 /**
- * Integration tests — immediate-release escrow (no lockup timer).
+ * Integration tests — direct-transfer escrow (v4).
+ * Admin creates escrow with pre-set recipient. Depositor approves & pays in one tx.
+ * Funds go directly depositor → recipient. No vault. No claim step.
+ *
  * Run: solana-test-validator & PROGRAM_ID=<id> yarn test:integration
  */
 import {
@@ -12,26 +15,21 @@ const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID ?? "Escrow11111111111111
 const conn       = new Connection(RPC, "confirmed");
 
 function padId(id: string): Buffer { const b = Buffer.alloc(32, 0); Buffer.from(id.slice(0, 32)).copy(b); return b; }
-function pda(prefix: string, id: string) {
-  return PublicKey.findProgramAddressSync([Buffer.from(prefix), padId(id)], PROGRAM_ID)[0];
+function escrowPDA(id: string) {
+  return PublicKey.findProgramAddressSync([Buffer.from("escrow"), padId(id)], PROGRAM_ID)[0];
 }
 function u8(v: number): number[] { return [v & 0xff]; }
 function u32le(v: number): number[] { return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]; }
 function u64le(v: bigint): number[] { return [...u32le(Number(v & 0xffffffffn)), ...u32le(Number((v >> 32n) & 0xffffffffn))]; }
 function str(s: string): number[] { const b = Array.from(new TextEncoder().encode(s)); return [...u32le(b.length), ...b]; }
-function bool(v: boolean): number[] { return [v ? 1 : 0]; }
 
 const enc = {
   create:  (id: string, r: PublicKey) =>
     Buffer.from([...u8(0), ...str(id), ...Array.from(r.toBytes())]),
   deposit: (id: string, a: bigint) =>
     Buffer.from([...u8(1), ...str(id), ...u64le(a)]),
-  claim:   (id: string) =>
+  cancel:  (id: string) =>
     Buffer.from([...u8(2), ...str(id)]),
-  dispute: (id: string) =>
-    Buffer.from([...u8(3), ...str(id)]),
-  resolve: (id: string, release: boolean) =>
-    Buffer.from([...u8(4), ...str(id), ...bool(release)]),
 };
 
 async function airdrop(kp: Keypair, sol = 2) {
@@ -41,7 +39,7 @@ function ix(data: Buffer, keys: any[]) {
   return new TransactionInstruction({ programId: PROGRAM_ID, keys, data });
 }
 
-describe("Immediate-release Escrow", () => {
+describe("Direct-transfer Escrow", () => {
   let admin: Keypair, depositor: Keypair, recipient: Keypair;
 
   beforeAll(async () => {
@@ -51,106 +49,136 @@ describe("Immediate-release Escrow", () => {
     await Promise.all([airdrop(admin), airdrop(depositor)]);
   }, 30_000);
 
-  // ---- Happy path: deposit → immediate claim ------------------------------
-  describe("Happy path: deposit → recipient claims immediately", () => {
-    const eid = `immediate-${Date.now()}`;
+  // ---- Happy path: create → deposit → funds land on recipient in one tx ----
+  describe("Happy path: deposit sends funds directly to recipient", () => {
+    const eid = `direct-${Date.now()}`;
+
+    test("admin creates escrow with recipient address", async () => {
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.create(eid, recipient.publicKey),
+        [
+          { pubkey: admin.publicKey,        isSigner: true,  isWritable: true  },
+          { pubkey: escrowPDA(eid),         isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [admin]);
+
+      const info = await conn.getAccountInfo(escrowPDA(eid));
+      expect(info).not.toBeNull();
+      expect(info!.data[0]).toBe(1); // discriminator
+    }, 30_000);
+
+    test("depositor approves → funds go directly to recipient (no vault)", async () => {
+      const lamports = BigInt(Math.floor(0.5 * LAMPORTS_PER_SOL));
+      const recipientBefore = await conn.getBalance(recipient.publicKey);
+
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.deposit(eid, lamports),
+        [
+          { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
+          { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
+          { pubkey: recipient.publicKey,     isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [depositor]);
+
+      // Recipient balance increased by exactly the deposited amount
+      const recipientAfter = await conn.getBalance(recipient.publicKey);
+      expect(recipientAfter - recipientBefore).toBe(Number(lamports));
+
+      // State PDA records the completed escrow (no vault balance to check)
+      const stateInfo = await conn.getAccountInfo(escrowPDA(eid));
+      expect(stateInfo).not.toBeNull();
+      // status byte: offset 1+32+32+32+8 = 105
+      expect(stateInfo!.data[105]).toBe(1); // EscrowStatus::Released
+    }, 30_000);
+
+    test("second deposit is rejected — escrow already released", async () => {
+      await expect(
+        sendAndConfirmTransaction(conn, new Transaction().add(ix(
+          enc.deposit(eid, BigInt(0.1 * LAMPORTS_PER_SOL)),
+          [
+            { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
+            { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
+            { pubkey: recipient.publicKey,     isSigner: false, isWritable: true  },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ]
+        )), [depositor])
+      ).rejects.toThrow();
+    }, 30_000);
+  });
+
+  // ---- Cancel path ---------------------------------------------------------
+  describe("Cancel path: admin cancels a pending escrow", () => {
+    const eid = `cancel-${Date.now()}`;
 
     test("admin creates escrow", async () => {
       await sendAndConfirmTransaction(conn, new Transaction().add(ix(
         enc.create(eid, recipient.publicKey),
         [
-          { pubkey: admin.publicKey,            isSigner: true,  isWritable: true  },
-          { pubkey: pda("escrow", eid),          isSigner: false, isWritable: true  },
-          { pubkey: pda("vault",  eid),          isSigner: false, isWritable: true  },
-          { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
+          { pubkey: admin.publicKey,         isSigner: true,  isWritable: true  },
+          { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ]
       )), [admin]);
-      const info = await conn.getAccountInfo(pda("escrow", eid));
-      expect(info!.data[0]).toBe(1); // discriminator
     }, 30_000);
 
-    test("depositor funds escrow immediately", async () => {
-      const lamports = BigInt(0.5 * LAMPORTS_PER_SOL);
+    test("admin cancels escrow → status Cancelled", async () => {
       await sendAndConfirmTransaction(conn, new Transaction().add(ix(
-        enc.deposit(eid, lamports),
+        enc.cancel(eid),
         [
-          { pubkey: depositor.publicKey,         isSigner: true,  isWritable: true  },
-          { pubkey: pda("escrow", eid),          isSigner: false, isWritable: true  },
-          { pubkey: pda("vault",  eid),          isSigner: false, isWritable: true  },
-          { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
+          { pubkey: admin.publicKey, isSigner: true,  isWritable: false },
+          { pubkey: escrowPDA(eid),  isSigner: false, isWritable: true  },
         ]
-      )), [depositor]);
-      expect(await conn.getBalance(pda("vault", eid))).toBe(Number(lamports));
+      )), [admin]);
+
+      const info = await conn.getAccountInfo(escrowPDA(eid));
+      expect(info!.data[105]).toBe(2); // EscrowStatus::Cancelled
     }, 30_000);
 
-    test("recipient claims immediately — no wait, no admin", async () => {
-      const before = await conn.getBalance(recipient.publicKey);
-      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
-        enc.claim(eid),
-        [
-          { pubkey: recipient.publicKey,         isSigner: true,  isWritable: true  },
-          { pubkey: pda("escrow", eid),          isSigner: false, isWritable: true  },
-          { pubkey: pda("vault",  eid),          isSigner: false, isWritable: true  },
-          { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
-        ]
-      )), [recipient]);
-      expect(await conn.getBalance(recipient.publicKey)).toBeGreaterThan(before);
-      expect(await conn.getBalance(pda("vault", eid))).toBe(0);
+    test("deposit on cancelled escrow is rejected", async () => {
+      await expect(
+        sendAndConfirmTransaction(conn, new Transaction().add(ix(
+          enc.deposit(eid, BigInt(0.1 * LAMPORTS_PER_SOL)),
+          [
+            { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
+            { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
+            { pubkey: recipient.publicKey,     isSigner: false, isWritable: true  },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ]
+        )), [depositor])
+      ).rejects.toThrow();
     }, 30_000);
   });
 
-  // ---- Dispute path -------------------------------------------------------
-  describe("Dispute path: depositor disputes → admin refunds", () => {
-    const eid = `dispute-${Date.now()}`;
+  // ---- Wrong recipient guard -----------------------------------------------
+  describe("Security: wrong recipient is rejected", () => {
+    const eid = `wrongrec-${Date.now()}`;
+    const imposter = Keypair.generate();
 
-    test("create + deposit", async () => {
+    test("admin creates escrow for real recipient", async () => {
       await sendAndConfirmTransaction(conn, new Transaction().add(ix(
         enc.create(eid, recipient.publicKey),
         [
           { pubkey: admin.publicKey,         isSigner: true,  isWritable: true  },
-          { pubkey: pda("escrow", eid),      isSigner: false, isWritable: true  },
-          { pubkey: pda("vault",  eid),      isSigner: false, isWritable: true  },
+          { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ]
       )), [admin]);
-      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
-        enc.deposit(eid, BigInt(0.3 * LAMPORTS_PER_SOL)),
-        [
-          { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
-          { pubkey: pda("escrow", eid),      isSigner: false, isWritable: true  },
-          { pubkey: pda("vault",  eid),      isSigner: false, isWritable: true  },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ]
-      )), [depositor]);
     }, 30_000);
 
-    test("depositor raises dispute — funds frozen", async () => {
-      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
-        enc.dispute(eid),
-        [
-          { pubkey: depositor.publicKey, isSigner: true,  isWritable: false },
-          { pubkey: pda("escrow", eid),  isSigner: false, isWritable: true  },
-        ]
-      )), [depositor]);
-      const info = await conn.getAccountInfo(pda("escrow", eid));
-      // status byte is at offset 97 (1+32+32+32+8=105? let's just check vault still has funds)
-      expect(await conn.getBalance(pda("vault", eid))).toBeGreaterThan(0);
-    }, 30_000);
-
-    test("admin resolves → refund to depositor", async () => {
-      const before = await conn.getBalance(depositor.publicKey);
-      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
-        enc.resolve(eid, false),
-        [
-          { pubkey: admin.publicKey,         isSigner: true,  isWritable: false },
-          { pubkey: pda("escrow", eid),      isSigner: false, isWritable: true  },
-          { pubkey: pda("vault",  eid),      isSigner: false, isWritable: true  },
-          { pubkey: depositor.publicKey,     isSigner: false, isWritable: true  },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ]
-      )), [admin]);
-      expect(await conn.getBalance(depositor.publicKey)).toBeGreaterThan(before);
-      expect(await conn.getBalance(pda("vault", eid))).toBe(0);
+    test("deposit with imposter recipient address is rejected", async () => {
+      await expect(
+        sendAndConfirmTransaction(conn, new Transaction().add(ix(
+          enc.deposit(eid, BigInt(0.1 * LAMPORTS_PER_SOL)),
+          [
+            { pubkey: depositor.publicKey,     isSigner: true,  isWritable: true  },
+            { pubkey: escrowPDA(eid),          isSigner: false, isWritable: true  },
+            { pubkey: imposter.publicKey,      isSigner: false, isWritable: true  }, // wrong!
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ]
+        )), [depositor])
+      ).rejects.toThrow();
     }, 30_000);
   });
 });
