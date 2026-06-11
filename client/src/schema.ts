@@ -1,56 +1,58 @@
 /**
- * Borsh serialization schemas mirroring the on-chain Rust types.
- * We use a manual approach compatible with borsh v2 for browser + Node.
+ * Borsh serialization helpers mirroring the on-chain Rust types.
+ * Manual implementation so it works in both Node and browser bundles.
  */
 
 // ---------------------------------------------------------------------------
-// EscrowInstruction discriminants (Borsh enum index)
+// Instruction discriminants (Borsh enum index)
 // ---------------------------------------------------------------------------
 export const enum InstructionType {
-  CreateEscrow = 0,
-  Deposit = 1,
-  ReleaseFunds = 2,
-  Refund = 3,
+  CreateEscrow    = 0,
+  Deposit         = 1,
+  ClaimFunds      = 2,
+  RaiseDispute    = 3,
+  ResolveDispute  = 4,
+  EmergencyRefund = 5,
 }
 
 // ---------------------------------------------------------------------------
-// Manual Borsh serialization helpers
+// Low-level write helpers
 // ---------------------------------------------------------------------------
-
-function writeU8(buf: number[], value: number) {
-  buf.push(value & 0xff);
+function writeU8(buf: number[], v: number) { buf.push(v & 0xff); }
+function writeU32LE(buf: number[], v: number) {
+  buf.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
 }
-
-function writeU32LE(buf: number[], value: number) {
-  buf.push(value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff);
+function writeU64LE(buf: number[], v: bigint) {
+  writeU32LE(buf, Number(v & 0xffffffffn));
+  writeU32LE(buf, Number((v >> 32n) & 0xffffffffn));
 }
-
-function writeU64LE(buf: number[], value: bigint) {
-  const lo = Number(value & 0xffffffffn);
-  const hi = Number((value >> 32n) & 0xffffffffn);
-  writeU32LE(buf, lo);
-  writeU32LE(buf, hi);
+function writeI64LE(buf: number[], v: bigint) { writeU64LE(buf, BigInt.asUintN(64, v)); }
+function writeString(buf: number[], s: string) {
+  const b = new TextEncoder().encode(s);
+  writeU32LE(buf, b.length);
+  b.forEach((x) => buf.push(x));
 }
-
-function writeString(buf: number[], str: string) {
-  const bytes = new TextEncoder().encode(str);
-  writeU32LE(buf, bytes.length);
-  for (const b of bytes) buf.push(b);
-}
-
 function writePubkey(buf: number[], key: Uint8Array) {
-  for (const b of key) buf.push(b);
+  key.forEach((x) => buf.push(x));
 }
+function writeBool(buf: number[], v: boolean) { buf.push(v ? 1 : 0); }
 
 // ---------------------------------------------------------------------------
-// Instruction builders
+// Instruction encoders
 // ---------------------------------------------------------------------------
 
-export function encodeCreateEscrow(escrowId: string, recipient: Uint8Array): Buffer {
+export function encodeCreateEscrow(
+  escrowId: string,
+  recipient: Uint8Array,
+  lockupSeconds: bigint,
+  disputeWindowSeconds: bigint
+): Buffer {
   const buf: number[] = [];
-  writeU8(buf, InstructionType.CreateEscrow); // enum discriminant
+  writeU8(buf, InstructionType.CreateEscrow);
   writeString(buf, escrowId);
   writePubkey(buf, recipient);
+  writeI64LE(buf, lockupSeconds);
+  writeI64LE(buf, disputeWindowSeconds);
   return Buffer.from(buf);
 }
 
@@ -62,102 +64,125 @@ export function encodeDeposit(escrowId: string, amount: bigint): Buffer {
   return Buffer.from(buf);
 }
 
-export function encodeReleaseFunds(escrowId: string): Buffer {
+export function encodeClaimFunds(escrowId: string): Buffer {
   const buf: number[] = [];
-  writeU8(buf, InstructionType.ReleaseFunds);
+  writeU8(buf, InstructionType.ClaimFunds);
   writeString(buf, escrowId);
   return Buffer.from(buf);
 }
 
-export function encodeRefund(escrowId: string): Buffer {
+export function encodeRaiseDispute(escrowId: string): Buffer {
   const buf: number[] = [];
-  writeU8(buf, InstructionType.Refund);
+  writeU8(buf, InstructionType.RaiseDispute);
   writeString(buf, escrowId);
   return Buffer.from(buf);
 }
+
+export function encodeResolveDispute(
+  escrowId: string,
+  releaseToRecipient: boolean
+): Buffer {
+  const buf: number[] = [];
+  writeU8(buf, InstructionType.ResolveDispute);
+  writeString(buf, escrowId);
+  writeBool(buf, releaseToRecipient);
+  return Buffer.from(buf);
+}
+
+export function encodeEmergencyRefund(escrowId: string): Buffer {
+  const buf: number[] = [];
+  writeU8(buf, InstructionType.EmergencyRefund);
+  writeString(buf, escrowId);
+  return Buffer.from(buf);
+}
+
+// ---------------------------------------------------------------------------
+// EscrowStatus
+// ---------------------------------------------------------------------------
+
+export enum EscrowStatus {
+  Pending   = 0,
+  Active    = 1,
+  Disputed  = 2,
+  Released  = 3,
+  Refunded  = 4,
+}
+
+export const ESCROW_STATUS_LABELS: Record<EscrowStatus, string> = {
+  [EscrowStatus.Pending]:  "Pending",
+  [EscrowStatus.Active]:   "Active",
+  [EscrowStatus.Disputed]: "Disputed",
+  [EscrowStatus.Released]: "Released",
+  [EscrowStatus.Refunded]: "Refunded",
+};
 
 // ---------------------------------------------------------------------------
 // EscrowState deserialization
 // ---------------------------------------------------------------------------
 
-export enum EscrowStatus {
-  Pending = 0,
-  Active = 1,
-  Released = 2,
-  Refunded = 3,
-}
-
-export const ESCROW_STATUS_LABELS: Record<EscrowStatus, string> = {
-  [EscrowStatus.Pending]: "Pending",
-  [EscrowStatus.Active]: "Active",
-  [EscrowStatus.Released]: "Released",
-  [EscrowStatus.Refunded]: "Refunded",
-};
-
 export interface EscrowStateData {
   discriminator: number;
-  admin: string;
-  depositor: string;
-  recipient: string;
-  amount: bigint;
-  status: EscrowStatus;
-  escrowId: string;
-  createdAt: bigint;
-  bump: number;
+  admin:         string;
+  depositor:     string;
+  recipient:     string;
+  amount:        bigint;
+  status:        EscrowStatus;
+  escrowId:      string;
+  createdAt:     bigint;
+  releaseAfter:  bigint;
+  disputeWindow: bigint;
+  bump:          number;
 }
 
-function readU8(data: Uint8Array, offset: number): [number, number] {
-  return [data[offset], offset + 1];
+function readU8(data: Uint8Array, off: number): [number, number] {
+  return [data[off], off + 1];
 }
-
-function readU64LE(data: Uint8Array, offset: number): [bigint, number] {
-  let value = 0n;
-  for (let i = 0; i < 8; i++) {
-    value |= BigInt(data[offset + i]) << BigInt(i * 8);
-  }
-  return [value, offset + 8];
+function readU64LE(data: Uint8Array, off: number): [bigint, number] {
+  let v = 0n;
+  for (let i = 0; i < 8; i++) v |= BigInt(data[off + i]) << BigInt(i * 8);
+  return [v, off + 8];
 }
-
-function readPubkey(data: Uint8Array, offset: number): [string, number] {
+function readI64LE(data: Uint8Array, off: number): [bigint, number] {
+  const [u, next] = readU64LE(data, off);
+  // sign-extend if high bit set
+  return [u >= 0x8000000000000000n ? u - 0x10000000000000000n : u, next];
+}
+function readPubkey(data: Uint8Array, off: number): [string, number] {
   const { PublicKey } = require("@solana/web3.js");
-  const bytes = data.slice(offset, offset + 32);
-  return [new PublicKey(bytes).toBase58(), offset + 32];
+  return [new PublicKey(data.slice(off, off + 32)).toBase58(), off + 32];
 }
 
 export function deserializeEscrowState(data: Buffer): EscrowStateData {
-  let offset = 0;
+  let off = 0;
 
-  let discriminator: number;
-  [discriminator, offset] = readU8(data, offset);
+  let discriminator: number;  [discriminator, off] = readU8(data, off);
+  let admin: string;          [admin,         off] = readPubkey(data, off);
+  let depositor: string;      [depositor,     off] = readPubkey(data, off);
+  let recipient: string;      [recipient,     off] = readPubkey(data, off);
+  let amount: bigint;         [amount,        off] = readU64LE(data, off);
+  let statusByte: number;     [statusByte,    off] = readU8(data, off);
 
-  let admin: string;
-  [admin, offset] = readPubkey(data, offset);
-
-  let depositor: string;
-  [depositor, offset] = readPubkey(data, offset);
-
-  let recipient: string;
-  [recipient, offset] = readPubkey(data, offset);
-
-  let amount: bigint;
-  [amount, offset] = readU64LE(data, offset);
-
-  let statusByte: number;
-  [statusByte, offset] = readU8(data, offset);
-  const status = statusByte as EscrowStatus;
-
-  const idBytes = data.slice(offset, offset + 32);
-  offset += 32;
+  const idBytes = data.slice(off, off + 32);
+  off += 32;
   const nullIdx = idBytes.indexOf(0);
-  const escrowId = new TextDecoder().decode(
-    nullIdx === -1 ? idBytes : idBytes.slice(0, nullIdx)
-  );
+  const escrowId = new TextDecoder().decode(nullIdx === -1 ? idBytes : idBytes.slice(0, nullIdx));
 
-  let createdAt: bigint;
-  [createdAt, offset] = readU64LE(data, offset);
+  let createdAt: bigint;      [createdAt,     off] = readI64LE(data, off);
+  let releaseAfter: bigint;   [releaseAfter,  off] = readI64LE(data, off);
+  let disputeWindow: bigint;  [disputeWindow, off] = readI64LE(data, off);
+  let bump: number;           [bump]               = readU8(data, off);
 
-  let bump: number;
-  [bump] = readU8(data, offset);
-
-  return { discriminator, admin, depositor, recipient, amount, status, escrowId, createdAt, bump };
+  return {
+    discriminator,
+    admin,
+    depositor,
+    recipient,
+    amount,
+    status: statusByte as EscrowStatus,
+    escrowId,
+    createdAt,
+    releaseAfter,
+    disputeWindow,
+    bump,
+  };
 }

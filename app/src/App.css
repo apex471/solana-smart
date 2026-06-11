@@ -1,186 +1,71 @@
-/* ---- Reset & base ---- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-body {
-  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
-  background: #0d0d14;
-  color: #e8e8f0;
-  min-height: 100vh;
-}
-
-/* ---- App shell ---- */
+body { font-family: "Inter", "Segoe UI", system-ui, sans-serif; background: #0d0d14; color: #e8e8f0; min-height: 100vh; }
 .app { display: flex; flex-direction: column; min-height: 100vh; }
 
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 2rem;
-  background: #13131f;
-  border-bottom: 1px solid #2a2a40;
-}
-
+/* ---- Header ---- */
+.app-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem 2rem; background: #13131f; border-bottom: 1px solid #2a2a40; }
 .header-left { display: flex; align-items: center; gap: 0.75rem; }
 .header-left h1 { font-size: 1.4rem; font-weight: 700; color: #9945ff; }
+.network-badge { background: #1a1a2e; border: 1px solid #9945ff55; color: #9945ff; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; padding: 0.2rem 0.5rem; border-radius: 99px; }
+.app-main { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 2rem 1rem; }
+.app-footer { text-align: center; padding: 1.5rem; color: #666; font-size: 0.8rem; border-top: 1px solid #1e1e30; }
+.wallet-btn-wrapper .wallet-adapter-button { background: #9945ff !important; border-radius: 8px !important; font-size: 0.85rem !important; }
 
-.network-badge {
-  background: #1a1a2e;
-  border: 1px solid #9945ff55;
-  color: #9945ff;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  padding: 0.2rem 0.5rem;
-  border-radius: 99px;
-}
-
-.app-main {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 2rem 1rem;
-}
-
-.app-footer {
-  text-align: center;
-  padding: 1.5rem;
-  color: #666;
-  font-size: 0.8rem;
-  border-top: 1px solid #1e1e30;
-}
-
-/* ---- Wallet button override ---- */
-.wallet-btn-wrapper .wallet-adapter-button {
-  background: #9945ff !important;
-  border-radius: 8px !important;
-  font-size: 0.85rem !important;
-}
-
-/* ---- Escrow panel ---- */
-.escrow-panel {
-  width: 100%;
-  max-width: 560px;
-  background: #13131f;
-  border: 1px solid #2a2a40;
-  border-radius: 16px;
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.escrow-panel h2 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #fff;
-  border-bottom: 1px solid #2a2a40;
-  padding-bottom: 0.75rem;
-}
-
-.escrow-panel h3 {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #aaa;
-  margin-bottom: 0.5rem;
-}
+/* ---- Escrow Panel ---- */
+.escrow-panel { width: 100%; max-width: 580px; background: #13131f; border: 1px solid #2a2a40; border-radius: 16px; padding: 2rem; display: flex; flex-direction: column; gap: 1.5rem; }
+.escrow-panel h2 { font-size: 1.5rem; font-weight: 700; color: #fff; border-bottom: 1px solid #2a2a40; padding-bottom: 0.75rem; }
+.escrow-panel h3 { font-size: 0.9rem; font-weight: 700; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
 
 /* ---- Fields ---- */
 .field-group { display: flex; flex-direction: column; gap: 0.4rem; }
-.field-group label { font-size: 0.8rem; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
-.field-group input {
-  background: #0d0d14;
-  border: 1px solid #2a2a40;
-  border-radius: 8px;
-  padding: 0.65rem 0.9rem;
-  color: #e8e8f0;
-  font-size: 0.95rem;
-  outline: none;
-  transition: border-color 0.2s;
-}
+.field-group label { font-size: 0.75rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.06em; }
+.field-group input { background: #0d0d14; border: 1px solid #2a2a40; border-radius: 8px; padding: 0.65rem 0.9rem; color: #e8e8f0; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
 .field-group input:focus { border-color: #9945ff; }
-.field-group input::placeholder { color: #444; }
+.field-group input::placeholder { color: #333; }
 
 /* ---- Status badge ---- */
-.status-badge {
-  display: inline-block;
-  padding: 0.3rem 0.8rem;
-  border-radius: 99px;
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 0.75rem;
-}
-.status-0 { background: #1e1e30; color: #888; border: 1px solid #333; }
-.status-1 { background: #1a1f10; color: #7fff00; border: 1px solid #4caf5055; }
-.status-2 { background: #1a1030; color: #9945ff; border: 1px solid #9945ff55; }
-.status-3 { background: #1f1a10; color: #f0a500; border: 1px solid #f0a50055; }
+.status-badge { display: inline-block; padding: 0.3rem 0.85rem; border-radius: 99px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.9rem; }
+.status-0 { background: #1e1e30; color: #666; border: 1px solid #2a2a40; }
+.status-1 { background: #0e2010; color: #14f195; border: 1px solid #14f19540; }
+.status-2 { background: #201808; color: #f0a500; border: 1px solid #f0a50040; }
+.status-3 { background: #180e28; color: #9945ff; border: 1px solid #9945ff40; }
+.status-4 { background: #1a1a1a; color: #888; border: 1px solid #333; }
 
 /* ---- Info table ---- */
-.escrow-info table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.escrow-info td { padding: 0.4rem 0; color: #ccc; }
-.escrow-info td:first-child { color: #666; width: 40%; }
-.mono { font-family: "JetBrains Mono", "Courier New", monospace; font-size: 0.8rem; }
+.escrow-info table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+.escrow-info td { padding: 0.35rem 0; color: #bbb; }
+.escrow-info td:first-child { color: #555; width: 38%; }
+.mono { font-family: "JetBrains Mono", monospace; font-size: 0.78rem; }
 
-/* ---- Deposit section ---- */
-.deposit-section { display: flex; flex-direction: column; gap: 0.75rem; }
-.hint { font-size: 0.8rem; color: #666; line-height: 1.5; }
+/* ---- Timers ---- */
+.timers { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
+.timer-block { background: #0d0d14; border: 1px solid #2a2a40; border-radius: 10px; padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; }
+.timer-block.timer-ready { border-color: #14f19540; background: #0e2010; }
+.timer-block.timer-dispute { border-color: #f0a50030; }
+.timer-label { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.04em; }
+.timer-value { font-size: 1rem; font-weight: 700; color: #e8e8f0; font-variant-numeric: tabular-nums; }
+.timer-ready .timer-value { color: #14f195; }
+.timer-dispute .timer-value { color: #f0a500; }
+
+/* ---- Action sections ---- */
+.action-section { display: flex; flex-direction: column; gap: 0.75rem; background: #0d0d14; border: 1px solid #2a2a40; border-radius: 12px; padding: 1.25rem; }
+.dispute-section { border-color: #f0a50030; }
+.hint { font-size: 0.82rem; color: #666; line-height: 1.6; }
+.success-hint { color: #14f195 !important; }
 
 /* ---- Buttons ---- */
-.btn-primary {
-  background: linear-gradient(135deg, #9945ff, #14f195);
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  padding: 0.75rem 1.5rem;
-  font-size: 0.95rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: opacity 0.2s, transform 0.1s;
-}
-.btn-primary:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: linear-gradient(135deg, #9945ff, #14f195); color: #fff; border: none; border-radius: 10px; padding: 0.75rem 1.5rem; font-size: 0.9rem; font-weight: 700; cursor: pointer; transition: opacity 0.2s, transform 0.1s; width: 100%; }
+.btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-danger { background: #2a1010; border: 1px solid #f0505060; color: #f05050; border-radius: 10px; padding: 0.75rem 1.5rem; font-size: 0.9rem; font-weight: 700; cursor: pointer; width: 100%; transition: background 0.2s; }
+.btn-danger:hover:not(:disabled) { background: #3a1010; }
+.btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ---- Notices ---- */
-.active-notice {
-  background: #1a1f10;
-  border: 1px solid #4caf5055;
-  border-radius: 10px;
-  padding: 1rem;
-  color: #7fff00;
-  font-size: 0.85rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.success-notice {
-  background: #1a1030;
-  border: 1px solid #9945ff55;
-  border-radius: 10px;
-  padding: 1rem;
-  color: #9945ff;
-  font-size: 0.85rem;
-  text-align: center;
-  font-weight: 600;
-}
-.refund-notice {
-  background: #1f1a10;
-  border: 1px solid #f0a50055;
-  border-radius: 10px;
-  padding: 1rem;
-  color: #f0a500;
-  font-size: 0.85rem;
-  text-align: center;
-  font-weight: 600;
-}
-.no-escrow { color: #555; font-size: 0.85rem; font-style: italic; }
+.active-notice { background: #0e2010; border: 1px solid #14f19530; border-radius: 10px; padding: 1rem; color: #14f195; font-size: 0.85rem; }
+.active-notice.disputed { background: #201808; border-color: #f0a50030; color: #f0a500; }
+.success-notice { background: #180e28; border: 1px solid #9945ff40; border-radius: 10px; padding: 1rem; color: #9945ff; font-size: 0.85rem; text-align: center; font-weight: 700; }
+.refund-notice  { background: #1a1a1a; border: 1px solid #33333360; border-radius: 10px; padding: 1rem; color: #888; font-size: 0.85rem; text-align: center; font-weight: 700; }
+.no-escrow { color: #444; font-size: 0.85rem; font-style: italic; }
 .warn { color: #f0a500; font-size: 0.8rem; }
-.status-msg {
-  background: #1e1e30;
-  border-radius: 8px;
-  padding: 0.6rem 0.9rem;
-  font-size: 0.8rem;
-  color: #aaa;
-  word-break: break-all;
-}
+.status-msg { background: #1a1a2a; border-radius: 8px; padding: 0.65rem 0.9rem; font-size: 0.78rem; color: #888; word-break: break-all; font-family: monospace; }

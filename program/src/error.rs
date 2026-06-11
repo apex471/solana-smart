@@ -9,7 +9,7 @@ pub enum EscrowError {
     #[error("Invalid instruction")]
     InvalidInstruction,
 
-    #[error("Not authorized — only admin can perform this action")]
+    #[error("Not authorized")]
     Unauthorized,
 
     #[error("Escrow is not in the expected status for this operation")]
@@ -21,9 +21,6 @@ pub enum EscrowError {
     #[error("Arithmetic overflow")]
     Overflow,
 
-    #[error("Invalid account owner")]
-    InvalidOwner,
-
     #[error("Incorrect program-derived address")]
     InvalidPDA,
 
@@ -32,6 +29,18 @@ pub enum EscrowError {
 
     #[error("Escrow ID too long (max 32 bytes)")]
     EscrowIdTooLong,
+
+    #[error("Lockup period has not expired yet — too early to claim")]
+    LockupNotExpired,
+
+    #[error("Dispute window has closed — too late to raise a dispute")]
+    DisputeWindowClosed,
+
+    #[error("lockup_seconds must be >= dispute_window_seconds")]
+    InvalidTiming,
+
+    #[error("Wrong recipient account")]
+    WrongRecipient,
 }
 
 impl From<EscrowError> for ProgramError {

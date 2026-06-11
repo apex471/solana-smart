@@ -1,46 +1,33 @@
 /**
- * Integration tests for the Solana Escrow program.
+ * Integration tests for the Solana Escrow program (optimistic auto-release).
  *
  * Run against a local validator:
  *   solana-test-validator &
- *   solana program deploy program/target/deploy/solana_escrow.so --program-id <keypair>
- *   yarn test
+ *   PROGRAM_ID=<deployed-id> yarn test:integration
  */
 
 import {
-  Connection,
-  Keypair,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-  Transaction,
-  TransactionInstruction,
-  SystemProgram,
+  Connection, Keypair, LAMPORTS_PER_SOL, PublicKey,
+  Transaction, TransactionInstruction, SystemProgram,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
 
-// ---------------------------------------------------------------------------
-// Config — set PROGRAM_ID env var to your deployed ID
-// ---------------------------------------------------------------------------
-const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899";
-const PROGRAM_ID = new PublicKey(
-  process.env.PROGRAM_ID ?? "EscroW1111111111111111111111111111111111111111"
-);
-
-const connection = new Connection(RPC, "confirmed");
+const RPC        = process.env.RPC_URL  ?? "http://127.0.0.1:8899";
+const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID ?? "Escrow11111111111111111111111111111111111111");
+const conn       = new Connection(RPC, "confirmed");
 
 // ---------------------------------------------------------------------------
-// Helpers (inline serialisation — mirrors client/src/schema.ts)
+// Helpers
 // ---------------------------------------------------------------------------
 function padId(id: string): Buffer {
   const b = Buffer.alloc(32, 0);
   Buffer.from(id.slice(0, 32)).copy(b);
   return b;
 }
-function pda(prefix: string, id: string): PublicKey {
+function pda(prefix: string, id: string) {
   return PublicKey.findProgramAddressSync([Buffer.from(prefix), padId(id)], PROGRAM_ID)[0];
 }
-
-function u8(v: number): number[] { return [v & 0xff]; }
+function u8(v: number): number[]  { return [v & 0xff]; }
 function u32le(v: number): number[] {
   return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff];
 }
@@ -51,176 +38,170 @@ function str(s: string): number[] {
   const b = Array.from(new TextEncoder().encode(s));
   return [...u32le(b.length), ...b];
 }
+function bool(v: boolean): number[] { return [v ? 1 : 0]; }
 
-function buildCreateEscrow(escrowId: string, recipient: PublicKey): Buffer {
-  return Buffer.from([...u8(0), ...str(escrowId), ...Array.from(recipient.toBytes())]);
-}
-function buildDeposit(escrowId: string, lamports: bigint): Buffer {
-  return Buffer.from([...u8(1), ...str(escrowId), ...u64le(lamports)]);
-}
-function buildRelease(escrowId: string): Buffer {
-  return Buffer.from([...u8(2), ...str(escrowId)]);
-}
-function buildRefund(escrowId: string): Buffer {
-  return Buffer.from([...u8(3), ...str(escrowId)]);
-}
+const enc = {
+  create: (id: string, recipient: PublicKey, lockup: bigint, dw: bigint) =>
+    Buffer.from([...u8(0), ...str(id), ...Array.from(recipient.toBytes()), ...u64le(lockup), ...u64le(dw)]),
+  deposit: (id: string, amt: bigint) =>
+    Buffer.from([...u8(1), ...str(id), ...u64le(amt)]),
+  claim: (id: string) =>
+    Buffer.from([...u8(2), ...str(id)]),
+  dispute: (id: string) =>
+    Buffer.from([...u8(3), ...str(id)]),
+  resolve: (id: string, release: boolean) =>
+    Buffer.from([...u8(4), ...str(id), ...bool(release)]),
+  emergency: (id: string) =>
+    Buffer.from([...u8(5), ...str(id)]),
+};
 
 async function airdrop(kp: Keypair, sol = 2) {
-  const sig = await connection.requestAirdrop(kp.publicKey, sol * LAMPORTS_PER_SOL);
-  await connection.confirmTransaction(sig);
+  const sig = await conn.requestAirdrop(kp.publicKey, sol * LAMPORTS_PER_SOL);
+  await conn.confirmTransaction(sig);
+}
+function ix(data: Buffer, keys: Parameters<typeof TransactionInstruction>[0]["keys"]) {
+  return new TransactionInstruction({ programId: PROGRAM_ID, keys, data });
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("Escrow Program", () => {
-  let admin: Keypair;
-  let depositor: Keypair;
-  let recipient: Keypair;
-  const escrowId = `test-${Date.now()}`;
+describe("Optimistic Escrow", () => {
+  let admin: Keypair, depositor: Keypair, recipient: Keypair;
 
   beforeAll(async () => {
-    admin = Keypair.generate();
+    admin     = Keypair.generate();
     depositor = Keypair.generate();
     recipient = Keypair.generate();
-    await Promise.all([airdrop(admin, 2), airdrop(depositor, 2)]);
+    await Promise.all([airdrop(admin), airdrop(depositor)]);
   }, 30_000);
 
-  test("admin creates escrow", async () => {
-    const statePDA = pda("escrow", escrowId);
-    const vaultPDA = pda("vault", escrowId);
+  // ---- Happy path: deposit → auto-claim ----------------------------------
+  describe("Happy path: deposit → auto-claim (no admin)", () => {
+    const eid = `auto-${Date.now()}`;
 
-    const ix = new TransactionInstruction({
-      programId: PROGRAM_ID,
-      keys: [
-        { pubkey: admin.publicKey, isSigner: true, isWritable: true },
-        { pubkey: statePDA, isSigner: false, isWritable: true },
-        { pubkey: vaultPDA, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: buildCreateEscrow(escrowId, recipient.publicKey),
-    });
+    test("admin creates escrow (2s lockup, 1s dispute window)", async () => {
+      const statePDA = pda("escrow", eid);
+      const vaultPDA = pda("vault",  eid);
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.create(eid, recipient.publicKey, 2n, 1n),
+        [
+          { pubkey: admin.publicKey, isSigner: true,  isWritable: true  },
+          { pubkey: statePDA,        isSigner: false, isWritable: true  },
+          { pubkey: vaultPDA,        isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [admin]);
 
-    const sig = await sendAndConfirmTransaction(
-      connection,
-      new Transaction().add(ix),
-      [admin]
-    );
-    expect(sig).toBeDefined();
+      const info = await conn.getAccountInfo(statePDA);
+      expect(info).not.toBeNull();
+      expect(info!.data[0]).toBe(1); // discriminator
+    }, 30_000);
 
-    const info = await connection.getAccountInfo(statePDA);
-    expect(info).not.toBeNull();
-    expect(info!.data[0]).toBe(1); // discriminator
-    expect(info!.data[148 - 1]).toBeDefined(); // bump byte present
-  }, 30_000);
+    test("depositor funds escrow immediately", async () => {
+      const statePDA = pda("escrow", eid);
+      const vaultPDA = pda("vault",  eid);
+      const lamports = BigInt(0.5 * LAMPORTS_PER_SOL);
 
-  test("depositor funds the escrow", async () => {
-    const statePDA = pda("escrow", escrowId);
-    const vaultPDA = pda("vault", escrowId);
-    const depositLamports = BigInt(0.5 * LAMPORTS_PER_SOL);
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.deposit(eid, lamports),
+        [
+          { pubkey: depositor.publicKey, isSigner: true,  isWritable: true  },
+          { pubkey: statePDA,            isSigner: false, isWritable: true  },
+          { pubkey: vaultPDA,            isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [depositor]);
 
-    const ix = new TransactionInstruction({
-      programId: PROGRAM_ID,
-      keys: [
-        { pubkey: depositor.publicKey, isSigner: true, isWritable: true },
-        { pubkey: statePDA, isSigner: false, isWritable: true },
-        { pubkey: vaultPDA, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: buildDeposit(escrowId, depositLamports),
-    });
+      expect(await conn.getBalance(vaultPDA)).toBe(Number(lamports));
+    }, 30_000);
 
-    await sendAndConfirmTransaction(
-      connection,
-      new Transaction().add(ix),
-      [depositor]
-    );
+    test("recipient claims after lockup — no admin needed", async () => {
+      // Wait for the 2-second lockup
+      await new Promise((r) => setTimeout(r, 3000));
 
-    const vaultBalance = await connection.getBalance(vaultPDA);
-    expect(vaultBalance).toBe(Number(depositLamports));
-  }, 30_000);
+      const statePDA  = pda("escrow", eid);
+      const vaultPDA  = pda("vault",  eid);
+      const before    = await conn.getBalance(recipient.publicKey);
 
-  test("admin releases funds to recipient", async () => {
-    const statePDA = pda("escrow", escrowId);
-    const vaultPDA = pda("vault", escrowId);
-    const beforeBalance = await connection.getBalance(recipient.publicKey);
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.claim(eid),
+        [
+          { pubkey: recipient.publicKey, isSigner: true,  isWritable: true  },
+          { pubkey: statePDA,            isSigner: false, isWritable: true  },
+          { pubkey: vaultPDA,            isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [recipient]);
 
-    const ix = new TransactionInstruction({
-      programId: PROGRAM_ID,
-      keys: [
-        { pubkey: admin.publicKey, isSigner: true, isWritable: false },
-        { pubkey: statePDA, isSigner: false, isWritable: true },
-        { pubkey: vaultPDA, isSigner: false, isWritable: true },
-        { pubkey: recipient.publicKey, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: buildRelease(escrowId),
-    });
+      expect(await conn.getBalance(recipient.publicKey)).toBeGreaterThan(before);
+      expect(await conn.getBalance(vaultPDA)).toBe(0);
+    }, 30_000);
+  });
 
-    await sendAndConfirmTransaction(
-      connection,
-      new Transaction().add(ix),
-      [admin]
-    );
+  // ---- Dispute path -------------------------------------------------------
+  describe("Dispute path: deposit → dispute → admin resolves refund", () => {
+    const eid = `dispute-${Date.now()}`;
 
-    const afterBalance = await connection.getBalance(recipient.publicKey);
-    expect(afterBalance).toBeGreaterThan(beforeBalance);
+    test("create + deposit", async () => {
+      const statePDA = pda("escrow", eid);
+      const vaultPDA = pda("vault",  eid);
 
-    // Vault should be drained
-    const vaultBalance = await connection.getBalance(vaultPDA);
-    expect(vaultBalance).toBe(0);
-  }, 30_000);
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.create(eid, recipient.publicKey, 60n, 30n), // 60s lockup, 30s dispute
+        [
+          { pubkey: admin.publicKey, isSigner: true,  isWritable: true  },
+          { pubkey: statePDA,        isSigner: false, isWritable: true  },
+          { pubkey: vaultPDA,        isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [admin]);
 
-  test("refund flow — creates separate escrow and refunds depositor", async () => {
-    const rid = `refund-${Date.now()}`;
-    const statePDA = pda("escrow", rid);
-    const vaultPDA = pda("vault", rid);
-    const depositLamports = BigInt(0.3 * LAMPORTS_PER_SOL);
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.deposit(eid, BigInt(0.3 * LAMPORTS_PER_SOL)),
+        [
+          { pubkey: depositor.publicKey, isSigner: true,  isWritable: true  },
+          { pubkey: statePDA,            isSigner: false, isWritable: true  },
+          { pubkey: vaultPDA,            isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [depositor]);
+    }, 30_000);
 
-    // Create
-    const createIx = new TransactionInstruction({
-      programId: PROGRAM_ID,
-      keys: [
-        { pubkey: admin.publicKey, isSigner: true, isWritable: true },
-        { pubkey: statePDA, isSigner: false, isWritable: true },
-        { pubkey: vaultPDA, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: buildCreateEscrow(rid, recipient.publicKey),
-    });
-    await sendAndConfirmTransaction(connection, new Transaction().add(createIx), [admin]);
+    test("depositor raises dispute", async () => {
+      const statePDA = pda("escrow", eid);
 
-    // Deposit
-    const depositIx = new TransactionInstruction({
-      programId: PROGRAM_ID,
-      keys: [
-        { pubkey: depositor.publicKey, isSigner: true, isWritable: true },
-        { pubkey: statePDA, isSigner: false, isWritable: true },
-        { pubkey: vaultPDA, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: buildDeposit(rid, depositLamports),
-    });
-    await sendAndConfirmTransaction(connection, new Transaction().add(depositIx), [depositor]);
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.dispute(eid),
+        [
+          { pubkey: depositor.publicKey, isSigner: true,  isWritable: false },
+          { pubkey: statePDA,            isSigner: false, isWritable: true  },
+        ]
+      )), [depositor]);
 
-    const depositorBefore = await connection.getBalance(depositor.publicKey);
+      const info = await conn.getAccountInfo(statePDA);
+      expect(info!.data[97]).toBe(2); // status byte = Disputed
+    }, 30_000);
 
-    // Refund
-    const refundIx = new TransactionInstruction({
-      programId: PROGRAM_ID,
-      keys: [
-        { pubkey: admin.publicKey, isSigner: true, isWritable: false },
-        { pubkey: statePDA, isSigner: false, isWritable: true },
-        { pubkey: vaultPDA, isSigner: false, isWritable: true },
-        { pubkey: depositor.publicKey, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: buildRefund(rid),
-    });
-    await sendAndConfirmTransaction(connection, new Transaction().add(refundIx), [admin]);
+    test("admin resolves dispute as refund", async () => {
+      const statePDA = pda("escrow", eid);
+      const vaultPDA = pda("vault",  eid);
+      const before   = await conn.getBalance(depositor.publicKey);
 
-    const depositorAfter = await connection.getBalance(depositor.publicKey);
-    expect(depositorAfter).toBeGreaterThan(depositorBefore);
-  }, 60_000);
+      await sendAndConfirmTransaction(conn, new Transaction().add(ix(
+        enc.resolve(eid, false), // false = refund depositor
+        [
+          { pubkey: admin.publicKey,     isSigner: true,  isWritable: false },
+          { pubkey: statePDA,            isSigner: false, isWritable: true  },
+          { pubkey: vaultPDA,            isSigner: false, isWritable: true  },
+          { pubkey: depositor.publicKey, isSigner: false, isWritable: true  },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ]
+      )), [admin]);
+
+      expect(await conn.getBalance(depositor.publicKey)).toBeGreaterThan(before);
+      expect(await conn.getBalance(vaultPDA)).toBe(0);
+    }, 30_000);
+  });
 });

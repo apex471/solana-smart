@@ -1,49 +1,48 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::pubkey::Pubkey;
 
-/// Maximum length of a string escrow ID stored on-chain.
 pub const ESCROW_ID_LEN: usize = 32;
-
-/// Discriminator written as the first byte so we can identify account types.
 pub const ESCROW_STATE_DISCRIMINATOR: u8 = 1;
 
-/// Size of the serialized EscrowState on-chain.
 /// discriminator(1) + admin(32) + depositor(32) + recipient(32) + amount(8)
-/// + status(1) + escrow_id([u8;32]=32) + created_at(8) + bump(1) = 147
-pub const ESCROW_STATE_SIZE: usize = 147;
+/// + status(1) + escrow_id(32) + created_at(8) + release_after(8)
+/// + dispute_window(8) + bump(1) = 163
+pub const ESCROW_STATE_SIZE: usize = 163;
 
 #[repr(u8)]
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, Copy, PartialEq)]
 pub enum EscrowStatus {
-    /// Created by admin, waiting for depositor funds.
+    /// Admin created slot, no funds yet.
     Pending = 0,
-    /// Funds deposited — work is in progress.
+    /// Funded — countdown to auto-release is running.
     Active = 1,
-    /// Admin released funds to recipient — contract complete.
-    Released = 2,
-    /// Admin refunded depositor — contract cancelled.
-    Refunded = 3,
+    /// Depositor raised a dispute — funds frozen, admin must resolve.
+    Disputed = 2,
+    /// Recipient claimed funds (auto-released).
+    Released = 3,
+    /// Funds returned to depositor (admin-resolved dispute or emergency).
+    Refunded = 4,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct EscrowState {
-    /// Account type discriminator.
     pub discriminator: u8,
-    /// Admin who controls this escrow (creates, releases, refunds).
+    /// Admin arbitrator — only needed for disputed escrows.
     pub admin: Pubkey,
-    /// Party that deposited funds.
+    /// Who deposited funds.
     pub depositor: Pubkey,
-    /// Party that receives funds on successful release.
+    /// Who receives funds on successful claim.
     pub recipient: Pubkey,
     /// Lamports locked in the vault PDA.
     pub amount: u64,
-    /// Current lifecycle status.
     pub status: EscrowStatus,
-    /// Unique identifier for this escrow (max 32 bytes, zero-padded).
     pub escrow_id: [u8; ESCROW_ID_LEN],
-    /// Unix timestamp when the escrow was created.
+    /// Unix timestamp of deposit.
     pub created_at: i64,
-    /// PDA bump seed for the EscrowState account.
+    /// Unix timestamp after which recipient can claim without approval.
+    pub release_after: i64,
+    /// Seconds after deposit during which depositor may raise a dispute.
+    pub dispute_window: i64,
     pub bump: u8,
 }
 
