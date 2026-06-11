@@ -138,70 +138,36 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
   return (
     <div className="escrow-panel">
-      <h2>Escrow Payment</h2>
+      <h2>Escrow Contract</h2>
 
-      {/* Escrow ID lookup */}
+      {/* Contract ID lookup */}
       <div className="field-group">
-        <label>Escrow ID</label>
+        <label>Contract ID</label>
         <input
           value={escrowId}
           onChange={(e) => setEscrowId(e.target.value)}
-          placeholder="Enter escrow ID provided by admin"
+          placeholder="Enter contract ID provided by admin"
           maxLength={32}
         />
       </div>
 
-      {noEscrow && <p className="no-escrow">No escrow found for "{escrowId}"</p>}
+      {noEscrow && <p className="no-escrow">No contract found for "{escrowId}"</p>}
 
-      {/* Escrow summary card */}
-      {info && (
-        <div className="escrow-info">
-          <div className={`status-badge status-${info.status}`}>
-            {STATUS_LABELS[info.status]}
-          </div>
-
-          <table><tbody>
-            <tr>
-              <td>Recipient</td>
-              <td className="mono highlight">{info.recipient}</td>
-            </tr>
-            <tr>
-              <td>Admin</td>
-              <td className="mono">{info.admin.slice(0, 20)}…</td>
-            </tr>
-            {info.depositor !== "11111111111111111111111111111111" && (
-              <tr>
-                <td>Paid by</td>
-                <td className="mono">{info.depositor.slice(0, 20)}…</td>
-              </tr>
-            )}
-            {info.amountSol > 0 && (
-              <tr>
-                <td>Amount paid</td>
-                <td><strong>{info.amountSol.toFixed(4)} SOL</strong></td>
-              </tr>
-            )}
-            <tr>
-              <td>Created</td>
-              <td>{new Date(info.createdAt * 1000).toLocaleString()}</td>
-            </tr>
-          </tbody></table>
-        </div>
-      )}
-
-      {/* Payment form — only shown when pending */}
+      {/* Pending — show contract approval card only, no recipient details */}
       {isPending && (
-        <div className="action-section">
-          <h3>Approve & Pay</h3>
-          <p className="hint">
-            Funds transfer <strong>directly to the recipient</strong> the moment
-            you approve this transaction. No waiting, no intermediary.
+        <div className="contract-card">
+          <div className="contract-icon">🔒</div>
+          <h3>Contract Ready for Signature</h3>
+          <p className="contract-meta">
+            Contract <span className="mono">{escrowId}</span>
           </p>
-
-          <div className="recipient-preview">
-            <span className="recipient-label">Sending to</span>
-            <span className="recipient-addr">{info!.recipient}</span>
-          </div>
+          <p className="contract-meta">
+            Issued <span>{new Date(info!.createdAt * 1000).toLocaleString()}</span>
+          </p>
+          <p className="hint">
+            By approving, you authorise this contract and the specified amount will
+            be settled immediately. The transaction is final and irreversible.
+          </p>
 
           <div className="field-group">
             <label>Amount (SOL)</label>
@@ -221,26 +187,27 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
             disabled={loading || !publicKey}
           >
             {loading
-              ? "Sending…"
-              : `Approve & Send${amountInput ? ` ${parseFloat(amountInput) || 0} SOL` : ""}`}
+              ? "Processing…"
+              : `Sign & Approve${amountInput ? ` — ${parseFloat(amountInput) || 0} SOL` : ""}`}
           </button>
 
           {!publicKey && (
-            <p className="warn">Connect your wallet above to pay.</p>
+            <p className="warn">Connect your wallet above to sign.</p>
           )}
         </div>
       )}
 
-      {/* Completion states */}
+      {/* Completion states — no amounts or addresses shown */}
       {isReleased && (
         <div className="success-notice">
-          ✓ Payment of <strong>{info!.amountSol.toFixed(4)} SOL</strong> was sent
-          directly to the recipient.
+          <div className="success-icon">✓</div>
+          <strong>Contract Fulfilled</strong>
+          <p>Your approval was received and the contract has been settled.</p>
         </div>
       )}
 
       {isCancelled && (
-        <div className="refund-notice">This escrow was cancelled by the admin.</div>
+        <div className="refund-notice">This contract was cancelled by the admin.</div>
       )}
 
       {statusMsg && <p className="status-msg">{statusMsg}</p>}

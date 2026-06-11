@@ -37,15 +37,13 @@ body { font-family: "Inter", "Segoe UI", system-ui, sans-serif; background: #0d0
 .escrow-info td:first-child { color: #555; width: 38%; }
 .mono { font-family: "JetBrains Mono", monospace; font-size: 0.78rem; }
 
-/* ---- Timers ---- */
-.timers { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
-.timer-block { background: #0d0d14; border: 1px solid #2a2a40; border-radius: 10px; padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; }
-.timer-block.timer-ready { border-color: #14f19540; background: #0e2010; }
-.timer-block.timer-dispute { border-color: #f0a50030; }
-.timer-label { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.04em; }
-.timer-value { font-size: 1rem; font-weight: 700; color: #e8e8f0; font-variant-numeric: tabular-nums; }
-.timer-ready .timer-value { color: #14f195; }
-.timer-dispute .timer-value { color: #f0a500; }
+/* ---- Contract card ---- */
+.contract-card { display: flex; flex-direction: column; gap: 0.9rem; background: #0d0d14; border: 1px solid #9945ff40; border-radius: 14px; padding: 1.5rem; }
+.contract-icon { font-size: 2rem; text-align: center; }
+.contract-card h3 { font-size: 1.05rem; font-weight: 700; color: #e8e8f0; text-align: center; text-transform: none; letter-spacing: 0; }
+.contract-meta { font-size: 0.8rem; color: #555; text-align: center; }
+.contract-meta .mono { color: #9945ff; font-size: 0.78rem; }
+.contract-divider { border: none; border-top: 1px solid #2a2a40; margin: 0.25rem 0; }
 
 /* ---- Action sections ---- */
 .action-section { display: flex; flex-direction: column; gap: 0.75rem; background: #0d0d14; border: 1px solid #2a2a40; border-radius: 12px; padding: 1.25rem; }
@@ -64,7 +62,9 @@ body { font-family: "Inter", "Segoe UI", system-ui, sans-serif; background: #0d0
 /* ---- Notices ---- */
 .active-notice { background: #0e2010; border: 1px solid #14f19530; border-radius: 10px; padding: 1rem; color: #14f195; font-size: 0.85rem; }
 .active-notice.disputed { background: #201808; border-color: #f0a50030; color: #f0a500; }
-.success-notice { background: #180e28; border: 1px solid #9945ff40; border-radius: 10px; padding: 1rem; color: #9945ff; font-size: 0.85rem; text-align: center; font-weight: 700; }
+.success-notice { background: #0e2010; border: 1px solid #14f19540; border-radius: 10px; padding: 1.25rem; color: #14f195; font-size: 0.9rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+.success-notice .success-icon { font-size: 1.8rem; }
+.success-notice p { color: #667; font-size: 0.8rem; font-weight: 400; }
 .refund-notice  { background: #1a1a1a; border: 1px solid #33333360; border-radius: 10px; padding: 1rem; color: #888; font-size: 0.85rem; text-align: center; font-weight: 700; }
 .no-escrow { color: #444; font-size: 0.85rem; font-style: italic; }
 .warn { color: #f0a500; font-size: 0.8rem; }
