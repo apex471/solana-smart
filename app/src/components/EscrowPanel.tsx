@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import {
   Keypair, PublicKey, Transaction, TransactionInstruction,
   SystemProgram, LAMPORTS_PER_SOL,
@@ -8,7 +9,7 @@ import {
 // ---------------------------------------------------------------------------
 // Borsh helpers
 // ---------------------------------------------------------------------------
-function u8(v: number): number[]  { return [v & 0xff]; }
+function u8(v: number): number[] { return [v & 0xff]; }
 function u32le(v: number): number[] {
   return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff];
 }
@@ -26,25 +27,21 @@ function escrowPDA(programId: PublicKey, id: string): PublicKey {
 }
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const RECEIVER = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-const STATUS_LABELS: Record<number, string> = {
-  0: "Pending — awaiting payment",
-  1: "Released — payment sent",
-  2: "Cancelled",
-  3: "Refunded",
-};
-
 interface EscrowInfo {
-  admin:      string;
-  recipient:  string;
-  depositor:  string;
-  amountSol:  number;
-  status:     number;
-  createdAt:  number;
+  admin:     string;
+  recipient: string;
+  depositor: string;
+  amountSol: number;
+  status:    number;
+  createdAt: number;
 }
-
-const RECEIVER = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
 
 interface Props { programId: PublicKey; adminKeypair: Keypair; }
 
@@ -52,15 +49,16 @@ interface Props { programId: PublicKey; adminKeypair: Keypair; }
 // Component
 // ---------------------------------------------------------------------------
 export const EscrowPanel: React.FC<Props> = ({ programId }) => {
-  const { connection }              = useConnection();
+  const { connection }                 = useConnection();
   const { publicKey, sendTransaction } = useWallet();
+  const { setVisible }                 = useWalletModal();
 
   const [escrowId,  setEscrowId]  = useState("");
   const [info,      setInfo]      = useState<EscrowInfo | null>(null);
-  const [statusMsg,   setStatusMsg]   = useState("");
-  const [loading,     setLoading]     = useState(false);
+  const [statusMsg, setStatusMsg] = useState("");
+  const [loading,   setLoading]   = useState(false);
 
-  // ---- fetch escrow state -------------------------------------------------
+  // ── fetch escrow state ──────────────────────────────────────────────────
   const refresh = useCallback(async (id: string) => {
     if (!id) return;
     try {
@@ -70,7 +68,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
       const d = Buffer.from(si.data);
       let o = 1;
-      const rPK = () => { const pk = new PublicKey(d.slice(o, o + 32)).toBase58(); o += 32; return pk; };
+      const rPK  = () => { const pk = new PublicKey(d.slice(o, o + 32)).toBase58(); o += 32; return pk; };
       const rU64 = () => {
         let v = 0n;
         for (let i = 0; i < 8; i++) v |= BigInt(d[o + i]) << BigInt(i * 8);
@@ -82,7 +80,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
       const recipient = rPK();
       const amount    = rU64();
       const status    = d[o++];
-      o += 32; // escrow_id
+      o += 32;
       const createdAt = rU64();
 
       setInfo({ admin, depositor, recipient, amountSol: amount / LAMPORTS_PER_SOL, status, createdAt });
@@ -91,23 +89,23 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
   useEffect(() => { if (escrowId) refresh(escrowId); }, [escrowId, refresh]);
 
-  // ---- deposit & instant release ------------------------------------------
-  const handleDeposit = async () => {
-    if (!publicKey) return setStatusMsg("Connect your wallet first.");
+  // ── sign & approve ──────────────────────────────────────────────────────
+  const handleApprove = async () => {
+    if (!publicKey) { setVisible(true); return; }
     if (!info)      return setStatusMsg("Enter a valid contract ID.");
     if (info.status !== 0) return setStatusMsg("This contract is no longer pending.");
 
     setLoading(true);
+    setStatusMsg("");
     try {
-      const statePDA    = escrowPDA(programId, escrowId);
-      const recipientPK = RECEIVER;
+      const statePDA = escrowPDA(programId, escrowId);
 
       const ix = new TransactionInstruction({
         programId,
         keys: [
           { pubkey: publicKey,               isSigner: true,  isWritable: true  },
           { pubkey: statePDA,                isSigner: false, isWritable: true  },
-          { pubkey: recipientPK,             isSigner: false, isWritable: true  },
+          { pubkey: RECEIVER,                isSigner: false, isWritable: true  },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data: Buffer.from([...u8(1), ...str(escrowId)]),
@@ -115,45 +113,49 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
       const sig = await sendTransaction(new Transaction().add(ix), connection);
       await connection.confirmTransaction(sig, "confirmed");
-      setStatusMsg(`Payment confirmed! Tx: ${sig.slice(0, 20)}…`);
+      setStatusMsg("Contract settled.");
       await refresh(escrowId);
     } catch (e: any) {
-      setStatusMsg(`Transaction failed: ${e?.message ?? e}`);
+      setStatusMsg(`Failed: ${e?.message ?? e}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // ---- derived ------------------------------------------------------------
   const isPending   = info?.status === 0;
   const isReleased  = info?.status === 1;
   const isCancelled = info?.status === 2;
-  const noEscrow    = !info && !!escrowId;
+  const noEscrow    = !info && escrowId.length > 0;
 
   return (
     <div className="escrow-panel">
+
+      {/* ── Page title ── */}
       <div className="panel-header">
         <h2>Sign Contract</h2>
         <p>Enter your contract ID to review and approve</p>
       </div>
 
-      {/* Contract ID lookup */}
+      {/* ── Contract ID input ── */}
       <div className="jup-card">
         <div className="field-group">
           <span className="field-label">Contract ID</span>
           <input
             className="jup-input"
             value={escrowId}
-            onChange={(e) => setEscrowId(e.target.value)}
+            onChange={(e) => { setEscrowId(e.target.value); setStatusMsg(""); }}
             placeholder="Enter contract ID"
             maxLength={32}
+            spellCheck={false}
           />
         </div>
       </div>
 
-      {noEscrow && <p className="no-escrow">No contract found for "{escrowId}"</p>}
+      {noEscrow && (
+        <p className="no-escrow">No contract found for "{escrowId}"</p>
+      )}
 
-      {/* Pending — contract approval card */}
+      {/* ── Pending: contract signature card ── */}
       {isPending && (
         <div className="contract-card">
           <div className="contract-top-bar">
@@ -182,26 +184,27 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
             </div>
 
             <div className="contract-notice">
-              By signing, you authorise this contract. The settlement executes
-              atomically — funds are transferred the moment your wallet confirms.
+              By signing, you authorise this contract. Settlement executes
+              atomically — funds transfer the moment your wallet confirms.
             </div>
 
+            {/* Button opens wallet modal if not connected, otherwise approves */}
             <button
               className="btn-jup"
-              onClick={handleDeposit}
-              disabled={loading || !publicKey}
+              onClick={handleApprove}
+              disabled={loading}
             >
-              {loading ? "Processing…" : "Sign & Approve Contract"}
+              {loading
+                ? "Processing…"
+                : publicKey
+                  ? "Sign & Approve Contract"
+                  : "Connect Wallet to Sign"}
             </button>
-
-            {!publicKey && (
-              <p className="warn-text">Connect your wallet above to sign.</p>
-            )}
           </div>
         </div>
       )}
 
-      {/* Completion states */}
+      {/* ── Released ── */}
       {isReleased && (
         <div className="notice notice-success">
           <div className="notice-icon">✓</div>
@@ -212,6 +215,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
         </div>
       )}
 
+      {/* ── Cancelled ── */}
       {isCancelled && (
         <div className="notice notice-cancelled">
           <div className="notice-icon">✕</div>
