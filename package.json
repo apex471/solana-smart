@@ -1,0 +1,22 @@
+{
+  "name": "solana-escrow-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["client", "app"],
+  "scripts": {
+    "build:program": "cd program && cargo build-sbf",
+    "build:client": "cd client && yarn build",
+    "build:app": "cd app && yarn build",
+    "test:program": "cd program && cargo test",
+    "test:integration": "yarn jest --config tests/jest.config.js --runInBand",
+    "deploy:devnet": "bash scripts/deploy.sh devnet",
+    "deploy:mainnet": "bash scripts/deploy.sh mainnet-beta"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.3.0",
+    "@solana/web3.js": "^1.95.0"
+  }
+}
