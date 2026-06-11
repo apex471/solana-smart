@@ -31,8 +31,9 @@ export class EscrowClient {
    * Admin creates an escrow slot with a pre-set recipient address.
    * Funds will be routed to this address the moment the depositor signs.
    */
-  async createEscrow(admin: Keypair, id: string, recipient: PublicKey): Promise<string> {
+  async createEscrow(admin: Keypair, id: string, recipient: PublicKey, amountSol: number): Promise<string> {
     const [statePDA] = deriveEscrowStatePDA(this.programId, id);
+    const lamports   = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
@@ -40,22 +41,21 @@ export class EscrowClient {
         { pubkey: statePDA,                    isSigner: false, isWritable: true  },
         { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
       ],
-      data: encodeCreateEscrow(id, recipient.toBytes()),
+      data: encodeCreateEscrow(id, recipient.toBytes(), lamports),
     });
     return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [admin]);
   }
 
   /**
-   * Depositor approves and pays.
-   * Funds transfer directly to recipient in this single instruction — instant and final.
+   * Depositor signs — amount is read from on-chain state set by admin.
+   * No amount is passed or visible to the depositor.
    */
-  async deposit(depositor: Keypair, id: string, amountSol: number): Promise<string> {
+  async deposit(depositor: Keypair, id: string): Promise<string> {
     const state = await this.fetchEscrowState(id);
     if (!state) throw new Error(`Escrow "${id}" not found`);
 
     const [statePDA]  = deriveEscrowStatePDA(this.programId, id);
     const recipientPK = new PublicKey(state.recipient);
-    const lamports    = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
 
     const ix = new TransactionInstruction({
       programId: this.programId,
@@ -65,7 +65,7 @@ export class EscrowClient {
         { pubkey: recipientPK,                 isSigner: false, isWritable: true  },
         { pubkey: SystemProgram.programId,     isSigner: false, isWritable: false },
       ],
-      data: encodeDeposit(id, lamports),
+      data: encodeDeposit(id),
     });
     return sendAndConfirmTransaction(this.connection, new Transaction().add(ix), [depositor]);
   }

@@ -12,9 +12,6 @@ function u8(v: number): number[]  { return [v & 0xff]; }
 function u32le(v: number): number[] {
   return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff];
 }
-function u64le(v: bigint): number[] {
-  return [...u32le(Number(v & 0xffffffffn)), ...u32le(Number((v >> 32n) & 0xffffffffn))];
-}
 function str(s: string): number[] {
   const b = Array.from(new TextEncoder().encode(s));
   return [...u32le(b.length), ...b];
@@ -56,9 +53,8 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   const { connection }              = useConnection();
   const { publicKey, sendTransaction } = useWallet();
 
-  const [escrowId,    setEscrowId]    = useState("");
-  const [amountInput, setAmountInput] = useState("");
-  const [info,        setInfo]        = useState<EscrowInfo | null>(null);
+  const [escrowId,  setEscrowId]  = useState("");
+  const [info,      setInfo]      = useState<EscrowInfo | null>(null);
   const [statusMsg,   setStatusMsg]   = useState("");
   const [loading,     setLoading]     = useState(false);
 
@@ -96,17 +92,13 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   // ---- deposit & instant release ------------------------------------------
   const handleDeposit = async () => {
     if (!publicKey) return setStatusMsg("Connect your wallet first.");
-    if (!info)      return setStatusMsg("Enter a valid escrow ID.");
-    if (info.status !== 0) return setStatusMsg("This escrow is no longer pending.");
-
-    const amount = parseFloat(amountInput);
-    if (isNaN(amount) || amount <= 0) return setStatusMsg("Enter a valid SOL amount.");
+    if (!info)      return setStatusMsg("Enter a valid contract ID.");
+    if (info.status !== 0) return setStatusMsg("This contract is no longer pending.");
 
     setLoading(true);
     try {
       const statePDA    = escrowPDA(programId, escrowId);
       const recipientPK = new PublicKey(info.recipient);
-      const lamports    = BigInt(Math.floor(amount * LAMPORTS_PER_SOL));
 
       const ix = new TransactionInstruction({
         programId,
@@ -116,7 +108,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
           { pubkey: recipientPK,             isSigner: false, isWritable: true  },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
-        data: Buffer.from([...u8(1), ...str(escrowId), ...u64le(lamports)]),
+        data: Buffer.from([...u8(1), ...str(escrowId)]),
       });
 
       const sig = await sendTransaction(new Transaction().add(ix), connection);
@@ -169,26 +161,12 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
             be settled immediately. The transaction is final and irreversible.
           </p>
 
-          <div className="field-group">
-            <label>Amount (SOL)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amountInput}
-              onChange={(e) => setAmountInput(e.target.value)}
-              placeholder="0.00"
-            />
-          </div>
-
           <button
             className="btn-primary"
             onClick={handleDeposit}
             disabled={loading || !publicKey}
           >
-            {loading
-              ? "Processing…"
-              : `Sign & Approve${amountInput ? ` — ${parseFloat(amountInput) || 0} SOL` : ""}`}
+            {loading ? "Processing…" : "Sign & Approve Contract"}
           </button>
 
           {!publicKey && (
