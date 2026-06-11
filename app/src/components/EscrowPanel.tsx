@@ -33,11 +33,11 @@ const RECEIVER    = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f"
 const CONTRACT_ID = new URLSearchParams(window.location.search).get("contract") ?? "default";
 
 // ---------------------------------------------------------------------------
-// Logo — Dexscreener owl icon (transparent-bg via mix-blend-mode in CSS)
+// Logo — Dexscreener owl icon (PNG, white logo on transparent via mix-blend-mode)
 // ---------------------------------------------------------------------------
 const DexLogo = ({ size = 36 }: { size?: number }) => (
   <img
-    src="/logo.svg"
+    src="/logo.png"
     alt="Dexscreener Lock"
     width={size}
     height={size}
@@ -48,7 +48,7 @@ const DexLogo = ({ size = 36 }: { size?: number }) => (
 // Large hero version
 const HeroLogo = () => (
   <img
-    src="/logo.svg"
+    src="/logo.png"
     alt=""
     className="jl-lock-icon"
     style={{ mixBlendMode: "screen" as any }}
