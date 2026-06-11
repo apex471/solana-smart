@@ -159,6 +159,36 @@ body {
   max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
+  border-radius: 8px 0 0 8px;
+}
+
+/* Wallet group: connected label + disconnect button side by side */
+.jl-wallet-group {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.jl-disconnect-btn {
+  background: var(--bg-input);
+  color: var(--text-sub);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  padding: 0 0.6rem;
+  height: 34px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.jl-disconnect-btn:hover {
+  background: rgba(255, 77, 77, 0.15);
+  color: #ff6b6b;
+  border-color: rgba(255, 77, 77, 0.3);
 }
 
 /* wallet adapter override */

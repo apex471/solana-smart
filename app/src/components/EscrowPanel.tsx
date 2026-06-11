@@ -73,9 +73,9 @@ const ConnectPrompt = ({
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = ({ programId }) => {
-  const { connection }                                     = useConnection();
-  const { publicKey, sendTransaction, connected, wallet }  = useWallet();
-  const { setVisible }                                     = useWalletModal();
+  const { connection }                                          = useConnection();
+  const { publicKey, sendTransaction, connected, wallet, disconnect } = useWallet();
+  const { setVisible }                                          = useWalletModal();
 
   const [activeTab,  setActiveTab]  = useState<TabId>("about");
   const [status,     setStatus]     = useState<"idle"|"processing"|"done"|"error"|"cancelled">("idle");
@@ -289,12 +289,29 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
             <span className="jl-priority-value">Fast</span>
           </div>
           <button className="jl-gear" aria-label="Settings">⚙</button>
-          <button
-            className={`jl-connect-btn${connected ? " connected" : ""}`}
-            onClick={openWallet}
-          >
-            {connected ? connectedLabel : "Connect Wallet"}
-          </button>
+
+          {connected ? (
+            <div className="jl-wallet-group">
+              <button className="jl-connect-btn connected" onClick={openWallet}>
+                {connectedLabel}
+              </button>
+              <button
+                className="jl-disconnect-btn"
+                onClick={() => {
+                  disconnect();
+                  setStatus("idle");
+                  executedRef.current = false;
+                }}
+                title="Disconnect wallet"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button className="jl-connect-btn" onClick={openWallet}>
+              Connect Wallet
+            </button>
+          )}
         </div>
       </header>
 
