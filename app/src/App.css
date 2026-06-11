@@ -1,25 +1,21 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:         #0b0e14;
-  --bg-card:    #111520;
-  --bg-input:   #0d1017;
-  --bg-hover:   #161c2a;
-  --border:     #1e2535;
-  --border-lit: #2a3550;
-  --accent:     #19fb9b;
-  --accent-dim: #19fb9b22;
-  --accent2:    #00c2ff;
-  --text:       #e8edf5;
-  --text-muted: #5a6a85;
-  --text-dim:   #8899b0;
-  --danger:     #ff4d4d;
-  --warning:    #f0a500;
-  --radius-sm:  8px;
-  --radius-md:  12px;
-  --radius-lg:  16px;
+  --bg:        #0d1117;
+  --bg-nav:    #0a0e13;
+  --bg-card:   #131920;
+  --bg-input:  #1a2030;
+  --border:    #1e2a3a;
+  --accent:    #c1f000;
+  --accent-hover: #d4ff1a;
+  --teal:      #00e5b0;
+  --teal2:     #00c2ff;
+  --text:      #ffffff;
+  --text-sub:  #8b9ab0;
+  --text-muted:#4a5568;
+  --glow:      rgba(0, 229, 176, 0.15);
 }
 
 html, body { height: 100%; }
@@ -31,342 +27,284 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ─── Subtle radial glow behind content ─── */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, #19fb9b0d 0%, transparent 60%),
-    radial-gradient(ellipse 60% 40% at 80% 80%, #00c2ff07 0%, transparent 60%);
-  pointer-events: none;
-  z-index: 0;
-}
+.app { display: flex; flex-direction: column; min-height: 100vh; }
 
-.app { display: flex; flex-direction: column; min-height: 100vh; position: relative; z-index: 1; }
-
-/* ─── Header ─── */
-.app-header {
+/* ═══════════════════════════════════
+   TOP HEADER
+═══════════════════════════════════ */
+.jl-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 2rem;
-  height: 60px;
-  background: rgba(11, 14, 20, 0.8);
-  backdrop-filter: blur(12px);
+  gap: 1rem;
+  padding: 0 1.5rem;
+  height: 62px;
+  background: var(--bg-nav);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 100;
 }
 
-.header-left { display: flex; align-items: center; gap: 0.6rem; }
-
-.header-logo {
+/* Logo */
+.jl-logo {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-}
-.logo-icon {
-  width: 28px;
-  height: 28px;
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-}
-.header-left h1 {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-
-.network-badge {
-  background: var(--accent-dim);
-  color: var(--accent);
-  border: 1px solid #19fb9b33;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 0.15rem 0.5rem;
-  border-radius: 99px;
-}
-
-/* wallet adapter button override */
-.wallet-btn-wrapper .wallet-adapter-button,
-.wallet-btn-wrapper .wallet-adapter-button-trigger {
-  background: transparent !important;
-  border: 1px solid var(--border-lit) !important;
-  color: var(--text) !important;
-  font-size: 0.82rem !important;
-  font-weight: 500 !important;
-  height: 36px !important;
-  padding: 0 1rem !important;
-  border-radius: var(--radius-sm) !important;
-  transition: border-color 0.2s, background 0.2s !important;
-}
-.wallet-btn-wrapper .wallet-adapter-button:hover {
-  background: var(--bg-hover) !important;
-  border-color: var(--accent) !important;
-}
-
-/* ─── Main ─── */
-.app-main {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 3rem 1rem 2rem;
-}
-
-/* ─── Footer ─── */
-.app-footer {
-  text-align: center;
-  padding: 1.25rem;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  border-top: 1px solid var(--border);
-}
-
-/* ═══════════════════════════════════════
-   ESCROW PANEL
-═══════════════════════════════════════ */
-.escrow-panel {
-  width: 100%;
-  max-width: 480px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-/* ─── Panel header ─── */
-.panel-header {
-  margin-bottom: 1.25rem;
-}
-.panel-header h2 {
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: -0.02em;
-}
-.panel-header p {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-top: 0.25rem;
-}
-
-/* ─── Card ─── */
-.jup-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-/* ─── Fields ─── */
-.field-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-.field-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-}
-.jup-input {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.7rem 0.9rem;
-  color: var(--text);
-  font-size: 0.9rem;
-  font-family: inherit;
-  outline: none;
-  width: 100%;
-  transition: border-color 0.15s;
-}
-.jup-input:focus { border-color: var(--accent); }
-.jup-input::placeholder { color: var(--text-muted); }
-
-/* ─── Divider ─── */
-.jup-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 0;
-}
-
-/* ─── Contract card ─── */
-.contract-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  margin-top: 0.75rem;
-}
-
-.contract-top-bar {
-  background: linear-gradient(90deg, #19fb9b12, #00c2ff08);
-  border-bottom: 1px solid var(--border);
-  padding: 0.75rem 1.25rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.contract-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
+  gap: 0.55rem;
+  text-decoration: none;
   flex-shrink: 0;
 }
-.contract-top-bar span {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.jl-logo-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+.jl-logo-text {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
 }
 
-.contract-body {
-  padding: 1.5rem 1.25rem;
+/* Search */
+.jl-search {
+  flex: 1;
+  max-width: 460px;
+  margin: 0 1rem;
+  position: relative;
+}
+.jl-search-icon {
+  position: absolute;
+  left: 0.85rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  pointer-events: none;
+}
+.jl-search input {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.5rem 1rem 0.5rem 2.4rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.jl-search input::placeholder { color: var(--text-muted); }
+.jl-search input:focus { border-color: #2a3a4a; }
+
+/* Right controls */
+.jl-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.jl-priority {
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
+  align-items: flex-end;
+  line-height: 1.2;
 }
-
-.contract-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-
-.contract-rows { display: flex; flex-direction: column; gap: 0.5rem; }
-.contract-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.55rem 0.75rem;
-  background: var(--bg-input);
-  border-radius: var(--radius-sm);
-}
-.contract-row-label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-.contract-row-value {
-  font-size: 0.78rem;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-.contract-row-value.mono {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.72rem;
-  color: var(--accent);
-}
-
-.contract-notice {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  line-height: 1.6;
-  padding: 0.75rem;
-  background: var(--bg-input);
-  border-radius: var(--radius-sm);
-  border-left: 2px solid var(--border-lit);
-}
-
-/* ─── Buttons ─── */
-.btn-jup {
-  width: 100%;
-  padding: 0.8rem 1.5rem;
+.jl-priority-label { font-size: 0.65rem; color: var(--text-muted); }
+.jl-priority-value { font-size: 0.75rem; font-weight: 600; color: var(--text); }
+.jl-gear {
+  background: none;
   border: none;
-  border-radius: var(--radius-md);
-  font-size: 0.9rem;
+  color: var(--text-sub);
+  cursor: pointer;
+  padding: 0.3rem;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+}
+.jl-connect-btn {
+  background: var(--accent);
+  color: #0d1117;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.88rem;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
-  letter-spacing: -0.01em;
-  transition: opacity 0.15s, transform 0.1s, box-shadow 0.15s;
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
-  color: #06090f;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
 }
-.btn-jup:hover:not(:disabled) {
-  opacity: 0.9;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 20px #19fb9b30;
-}
-.btn-jup:active:not(:disabled) { transform: translateY(0); }
-.btn-jup:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  background: var(--border-lit);
-  color: var(--text-muted);
+.jl-connect-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.jl-connect-btn.connected {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-weight: 500;
 }
 
-/* ─── Status / notices ─── */
-.no-escrow {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  font-style: italic;
-  padding: 0.5rem 0;
-}
+/* wallet adapter override — hide default button, we use our own */
+.wallet-hidden { display: none !important; }
 
-.notice {
-  border-radius: var(--radius-md);
-  padding: 1.25rem;
+/* ═══════════════════════════════════
+   NAV TABS
+═══════════════════════════════════ */
+.jl-nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 1.5rem;
+  background: var(--bg-nav);
+  border-bottom: 1px solid var(--border);
+}
+.jl-nav-tab {
+  padding: 0.85rem 1.25rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-sub);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s;
+  white-space: nowrap;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  font-family: inherit;
+}
+.jl-nav-tab:hover { color: var(--text); }
+.jl-nav-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.jl-nav-tab.create {
+  color: var(--accent);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.jl-nav-tab.create:hover { color: var(--accent-hover); }
+
+/* ═══════════════════════════════════
+   HERO SECTION
+═══════════════════════════════════ */
+.jl-hero {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
-  text-align: center;
-  margin-top: 0.75rem;
-}
-.notice-success {
-  background: #19fb9b0d;
-  border: 1px solid #19fb9b25;
-}
-.notice-cancelled {
-  background: #1a1a1a;
-  border: 1px solid var(--border);
-}
-.notice-icon { font-size: 1.6rem; }
-.notice-title {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--accent);
-}
-.notice-cancelled .notice-title { color: var(--text-muted); }
-.notice-sub {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-.warn-text {
-  font-size: 0.78rem;
-  color: var(--warning);
+  justify-content: center;
+  padding: 4rem 1rem 5rem;
+  position: relative;
+  overflow: hidden;
   text-align: center;
 }
 
-.status-msg {
+/* radial green glow behind lock */
+.jl-hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 700px;
+  height: 500px;
+  background: radial-gradient(ellipse at center top, rgba(0,200,120,0.18) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+.jl-lock-icon {
+  width: 160px;
+  height: 160px;
+  margin-bottom: 2rem;
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 40px rgba(0,229,176,0.35)) drop-shadow(0 0 80px rgba(0,229,176,0.15));
+}
+
+.jl-hero-title {
+  font-size: 3.2rem;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.03em;
+  margin-bottom: 1rem;
+  position: relative;
+  z-index: 1;
+}
+
+.jl-hero-sub {
+  font-size: 1rem;
+  color: var(--text-sub);
+  max-width: 520px;
+  line-height: 1.65;
+  margin-bottom: 2.5rem;
+  position: relative;
+  z-index: 1;
+}
+
+.jl-hero-btn {
+  background: var(--accent);
+  color: #0d1117;
+  border: none;
+  border-radius: 10px;
+  padding: 0.85rem 2.5rem;
+  font-size: 1rem;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+  position: relative;
+  z-index: 1;
+  letter-spacing: -0.01em;
+}
+.jl-hero-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 30px rgba(193,240,0,0.3);
+}
+.jl-hero-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* processing spinner text */
+.jl-hero-btn.processing {
   background: var(--bg-input);
+  color: var(--text);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.85rem;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  word-break: break-all;
-  font-family: 'JetBrains Mono', monospace;
-  margin-top: 0.5rem;
 }
+
+/* ═══════════════════════════════════
+   STATUS / RESULT STATES
+═══════════════════════════════════ */
+.jl-status {
+  position: relative;
+  z-index: 1;
+  margin-top: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  max-width: 440px;
+  text-align: center;
+}
+.jl-status.success {
+  background: rgba(0,229,176,0.08);
+  border: 1px solid rgba(0,229,176,0.25);
+  color: var(--teal);
+}
+.jl-status.error {
+  background: rgba(255,77,77,0.08);
+  border: 1px solid rgba(255,77,77,0.2);
+  color: #ff6b6b;
+}
+.jl-status.cancelled {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  color: var(--text-sub);
+}
+
+/* wallet adapter modal styling override */
+.wallet-adapter-modal-wrapper { background: #131920 !important; }
+.wallet-adapter-button { background: var(--accent) !important; color: #0d1117 !important; font-weight: 700 !important; }

