@@ -12,13 +12,17 @@ import { EscrowPanel } from "./components/EscrowPanel";
 import "@solana/wallet-adapter-react-ui/styles.css";
 import "./App.css";
 
-const NETWORK    = WalletAdapterNetwork.Devnet;
+const NETWORK    = WalletAdapterNetwork.Mainnet;
 const PROGRAM_ID = new PublicKey(
   process.env.REACT_APP_PROGRAM_ID ?? "Escrow11111111111111111111111111111111111111"
 );
 
+// Use a reliable mainnet RPC — public Solana endpoint or env override
+const RPC_ENDPOINT =
+  process.env.REACT_APP_RPC_URL ?? "https://api.mainnet-beta.solana.com";
+
 export default function App() {
-  const endpoint = useMemo(() => clusterApiUrl(NETWORK), []);
+  const endpoint = useMemo(() => RPC_ENDPOINT, []);
   const wallets  = useMemo(() => [
     new PhantomWalletAdapter(),
     new SolflareWalletAdapter(),
