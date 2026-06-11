@@ -348,6 +348,62 @@ body {
   color: var(--text-sub);
 }
 
+/* ═══════════════════════════════════
+   CONNECT PROMPT (wallet-gated tabs)
+═══════════════════════════════════ */
+.jl-connect-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 1rem;
+  padding: 0 var(--px);
+  max-width: 440px;
+  width: 100%;
+}
+.jl-prompt-icon {
+  margin-bottom: 0.5rem;
+  opacity: 0.85;
+}
+.jl-prompt-title {
+  font-size: clamp(1.3rem, 4vw, 1.8rem);
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+.jl-prompt-desc {
+  font-size: clamp(0.85rem, 2.5vw, 0.95rem);
+  color: var(--text-sub);
+  line-height: 1.6;
+  margin-bottom: 0.5rem;
+}
+
+/* ═══════════════════════════════════
+   EMPTY STATE
+═══════════════════════════════════ */
+.jl-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+  padding: 0 var(--px);
+}
+.jl-empty-icon {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.5;
+}
+.jl-empty-state h2 {
+  font-size: clamp(1.1rem, 3vw, 1.4rem);
+  font-weight: 600;
+  color: var(--text);
+}
+.jl-empty-state p {
+  font-size: 0.9rem;
+  color: var(--text-sub);
+}
+
 /* wallet adapter modal override */
 .wallet-adapter-modal-wrapper { background: #131920 !important; }
 .wallet-adapter-button { background: var(--accent) !important; color: #0d1117 !important; font-weight: 700 !important; }
