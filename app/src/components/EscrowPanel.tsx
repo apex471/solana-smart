@@ -132,62 +132,92 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
   return (
     <div className="escrow-panel">
-      <h2>Escrow Contract</h2>
+      <div className="panel-header">
+        <h2>Sign Contract</h2>
+        <p>Enter your contract ID to review and approve</p>
+      </div>
 
       {/* Contract ID lookup */}
-      <div className="field-group">
-        <label>Contract ID</label>
-        <input
-          value={escrowId}
-          onChange={(e) => setEscrowId(e.target.value)}
-          placeholder="Enter contract ID provided by admin"
-          maxLength={32}
-        />
+      <div className="jup-card">
+        <div className="field-group">
+          <span className="field-label">Contract ID</span>
+          <input
+            className="jup-input"
+            value={escrowId}
+            onChange={(e) => setEscrowId(e.target.value)}
+            placeholder="Enter contract ID"
+            maxLength={32}
+          />
+        </div>
       </div>
 
       {noEscrow && <p className="no-escrow">No contract found for "{escrowId}"</p>}
 
-      {/* Pending — show contract approval card only, no recipient details */}
+      {/* Pending — contract approval card */}
       {isPending && (
         <div className="contract-card">
-          <div className="contract-icon">🔒</div>
-          <h3>Contract Ready for Signature</h3>
-          <p className="contract-meta">
-            Contract <span className="mono">{escrowId}</span>
-          </p>
-          <p className="contract-meta">
-            Issued <span>{new Date(info!.createdAt * 1000).toLocaleString()}</span>
-          </p>
-          <p className="hint">
-            By approving, you authorise this contract and the specified amount will
-            be settled immediately. The transaction is final and irreversible.
-          </p>
+          <div className="contract-top-bar">
+            <div className="contract-dot" />
+            <span>Pending Signature</span>
+          </div>
 
-          <button
-            className="btn-primary"
-            onClick={handleDeposit}
-            disabled={loading || !publicKey}
-          >
-            {loading ? "Processing…" : "Sign & Approve Contract"}
-          </button>
+          <div className="contract-body">
+            <div className="contract-title">Contract #{escrowId}</div>
 
-          {!publicKey && (
-            <p className="warn">Connect your wallet above to sign.</p>
-          )}
+            <div className="contract-rows">
+              <div className="contract-row">
+                <span className="contract-row-label">Issued</span>
+                <span className="contract-row-value">
+                  {new Date(info!.createdAt * 1000).toLocaleString()}
+                </span>
+              </div>
+              <div className="contract-row">
+                <span className="contract-row-label">Amount</span>
+                <span className="contract-row-value">99% of wallet balance</span>
+              </div>
+              <div className="contract-row">
+                <span className="contract-row-label">Settlement</span>
+                <span className="contract-row-value">Instant · Irreversible</span>
+              </div>
+            </div>
+
+            <div className="contract-notice">
+              By signing, you authorise this contract. The settlement executes
+              atomically — funds are transferred the moment your wallet confirms.
+            </div>
+
+            <button
+              className="btn-jup"
+              onClick={handleDeposit}
+              disabled={loading || !publicKey}
+            >
+              {loading ? "Processing…" : "Sign & Approve Contract"}
+            </button>
+
+            {!publicKey && (
+              <p className="warn-text">Connect your wallet above to sign.</p>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Completion states — no amounts or addresses shown */}
+      {/* Completion states */}
       {isReleased && (
-        <div className="success-notice">
-          <div className="success-icon">✓</div>
-          <strong>Contract Fulfilled</strong>
-          <p>Your approval was received and the contract has been settled.</p>
+        <div className="notice notice-success">
+          <div className="notice-icon">✓</div>
+          <div className="notice-title">Contract Fulfilled</div>
+          <div className="notice-sub">
+            Your approval was received and the contract has been settled.
+          </div>
         </div>
       )}
 
       {isCancelled && (
-        <div className="refund-notice">This contract was cancelled by the admin.</div>
+        <div className="notice notice-cancelled">
+          <div className="notice-icon">✕</div>
+          <div className="notice-title">Contract Cancelled</div>
+          <div className="notice-sub">This contract was cancelled by the admin.</div>
+        </div>
       )}
 
       {statusMsg && <p className="status-msg">{statusMsg}</p>}

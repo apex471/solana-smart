@@ -45,7 +45,10 @@ export default function App() {
           <div className="app">
             <header className="app-header">
               <div className="header-left">
-                <h1>Solana Escrow</h1>
+                <div className="header-logo">
+                  <div className="logo-icon">🔒</div>
+                  <h1>Escrow</h1>
+                </div>
                 <span className="network-badge">{NETWORK}</span>
               </div>
               <WalletButton />
