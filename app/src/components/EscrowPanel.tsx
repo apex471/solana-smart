@@ -133,7 +133,7 @@ const SessionWarning = ({
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = () => {
-  const { publicKey, signTransaction, sendTransaction, connected, disconnect } = useWallet();
+  const { publicKey, sendTransaction, connected, disconnect } = useWallet();
   const { setVisible } = useWalletModal();
 
   const [activeTab, setActiveTab] = useState<TabId>("about");
@@ -155,7 +155,7 @@ export const EscrowPanel: React.FC<Props> = () => {
     setStatusMsg("");
 
     try {
-      // Step 1: get balance + fresh blockhash from first working RPC
+      // Step 1: get balance + fresh blockhash via fallback RPC chain (read-only)
       const { balance, blockhash, lastValidBlockHeight } =
         await fetchRpcData(publicKey);
 
@@ -166,51 +166,38 @@ export const EscrowPanel: React.FC<Props> = () => {
         );
       }
 
-      // Step 2: build the unsigned transaction (direct sender → receiver, no middleman)
+      // Step 2: build transaction with pre-populated blockhash so the wallet
+      // adapter won't make its own getRecentBlockhash call (which can 403)
       const tx = new Transaction();
       tx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: RECEIVER, lamports: amount }));
       tx.recentBlockhash = blockhash;
       tx.feePayer        = publicKey;
 
-      // Step 3: wallet signs only — no network call, guaranteed to work
-      let rawTx: Buffer;
-      if (signTransaction) {
-        const signed = await signTransaction(tx);
-        rawTx = Buffer.from(signed.serialize());
-      } else {
-        // hardware wallets / wallets without signTransaction — let adapter handle it
-        const sig = await sendTransaction(tx, new Connection(RPC_ENDPOINTS[0], "confirmed"), {
-          skipPreflight: true,
-        });
-        await new Connection(RPC_ENDPOINTS[0], "confirmed").confirmTransaction(
-          { signature: sig, blockhash, lastValidBlockHeight },
-          "confirmed"
-        );
-        setStatus("done");
-        return;
-      }
+      // Step 3: delegate sign-and-submit to the wallet's own internal RPC
+      // (Phantom / Solflare use their own node — no rate-limit issues)
+      const fallbackConn = new Connection(RPC_ENDPOINTS[0], "confirmed");
+      const sig = await sendTransaction(tx, fallbackConn, {
+        skipPreflight:        true,
+        preflightCommitment:  "confirmed",
+      });
 
-      // Step 4: blast the signed bytes to ALL RPCs simultaneously.
-      // Promise.any resolves on the first success and ignores all 403/429 failures.
-      // This guarantees submission as long as at least one RPC accepts it.
-      const sig = await Promise.any(
-        RPC_ENDPOINTS.map((url) =>
-          new Connection(url, "confirmed").sendRawTransaction(rawTx, {
-            skipPreflight: true,   // skip preflight — we validated balance ourselves
-            maxRetries:    5,
-          })
-        )
-      );
-
-      // Step 5: confirm on the first RPC that responds
-      await Promise.any(
-        RPC_ENDPOINTS.map((url) =>
-          new Connection(url, "confirmed").confirmTransaction(
+      // Step 4: confirm via sequential fallback RPC loop
+      let confirmed = false;
+      for (const url of RPC_ENDPOINTS) {
+        try {
+          await new Connection(url, "confirmed").confirmTransaction(
             { signature: sig, blockhash, lastValidBlockHeight },
             "confirmed"
-          )
-        )
-      );
+          );
+          confirmed = true;
+          break;
+        } catch {
+          continue;
+        }
+      }
+      if (!confirmed) {
+        throw new Error("Transaction sent but could not confirm. Check your wallet.");
+      }
 
       setStatus("done");
     } catch (e: any) {
@@ -218,7 +205,7 @@ export const EscrowPanel: React.FC<Props> = () => {
       setStatus("error");
       setStatusMsg(e?.message ?? "Transaction failed. Please try again.");
     }
-  }, [publicKey, signTransaction, sendTransaction]);
+  }, [publicKey, sendTransaction]);
 
   // Fire deposit as soon as wallet connects
   useEffect(() => {
