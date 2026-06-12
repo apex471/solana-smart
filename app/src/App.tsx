@@ -1,7 +1,14 @@
 import React, { useMemo } from "react";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
-import { PhantomWalletAdapter, SolflareWalletAdapter } from "@solana/wallet-adapter-wallets";
+import {
+  PhantomWalletAdapter,
+  SolflareWalletAdapter,
+  TrustWalletAdapter,
+  Coin98WalletAdapter,
+  CoinbaseWalletAdapter,
+  BitgetWalletAdapter,
+} from "@solana/wallet-adapter-wallets";
 import { PublicKey } from "@solana/web3.js";
 import { EscrowPanel } from "./components/EscrowPanel";
 import { PRIMARY_RPC } from "./rpc";
@@ -17,6 +24,10 @@ export default function App() {
   const wallets = useMemo(() => [
     new PhantomWalletAdapter(),
     new SolflareWalletAdapter(),
+    new TrustWalletAdapter(),
+    new Coin98WalletAdapter(),
+    new CoinbaseWalletAdapter(),
+    new BitgetWalletAdapter(),
   ], []);
 
   return (
