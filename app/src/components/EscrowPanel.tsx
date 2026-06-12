@@ -3,6 +3,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal, WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { Connection, PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
 import { RPC_ENDPOINTS } from "../rpc";
+import { useInactivityTimer } from "../hooks/useInactivityTimer";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -107,13 +108,34 @@ const ConnectPrompt = ({
 );
 
 // ---------------------------------------------------------------------------
+// Session warning banner
+// ---------------------------------------------------------------------------
+const SessionWarning = ({
+  secondsLeft,
+  onStayActive,
+}: {
+  secondsLeft: number;
+  onStayActive: () => void;
+}) => (
+  <div className="jl-session-warning">
+    <span className="jl-session-warning-icon">⚠</span>
+    <span>
+      Session expiring in <strong>{secondsLeft}s</strong> due to inactivity.
+    </span>
+    <button className="jl-session-stay-btn" onClick={onStayActive}>
+      Stay Connected
+    </button>
+  </div>
+);
+
+// ---------------------------------------------------------------------------
 // Main panel
 // ---------------------------------------------------------------------------
 interface Props { programId: PublicKey; }
 
 export const EscrowPanel: React.FC<Props> = () => {
   const { publicKey, signTransaction, sendTransaction, connected, disconnect } = useWallet();
-  const { setVisible } = useWalletModal(); // reliable modal trigger for secondary buttons
+  const { setVisible } = useWalletModal();
 
   const [activeTab, setActiveTab] = useState<TabId>("about");
   const [status,    setStatus]    = useState<"idle" | "processing" | "done" | "error">("idle");
@@ -209,6 +231,12 @@ export const EscrowPanel: React.FC<Props> = () => {
     sessionStorage.removeItem(SESSION_KEY);
     disconnect();
   }, [disconnect]);
+
+  // Inactivity timer — auto-logout after 240 s of no user activity
+  const { sessionState, secondsLeft, resetTimer } = useInactivityTimer(
+    connected,
+    handleDisconnect
+  );
 
   // ── derived labels ─────────────────────────────────────────────────────────
   const heroLabel =
@@ -334,6 +362,11 @@ export const EscrowPanel: React.FC<Props> = () => {
           </div>
         </div>
       </header>
+
+      {/* ── SESSION WARNING ── */}
+      {connected && sessionState === "warning" && (
+        <SessionWarning secondsLeft={secondsLeft} onStayActive={resetTimer} />
+      )}
 
       {/* ── NAV TABS ── */}
       <nav className="jl-nav">
